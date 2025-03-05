@@ -55,6 +55,54 @@ NODE_TYPES = {
         'decay_rate': (0.04, 0.09),
         'connection_strength': 1.8,
         'resurrection_chance': 0.18
+    },
+     'oscillator': {
+        'color': '#FFC300',  # Gold/Yellow
+        'size_range': (60, 160),
+        'firing_rate': (0.3, 0.7),
+        'decay_rate': (0.02, 0.06),
+        'connection_strength': 1.4,
+        'resurrection_chance': 0.2,
+    },
+    'bridge': {
+        'color': '#1ABC9C',  # Turquoise
+        'size_range': (70, 170),
+        'firing_rate': (0.1, 0.2),
+        'decay_rate': (0.01, 0.04),
+        'connection_strength': 1.7,
+        'resurrection_chance': 0.22,
+    },
+    'pruner': {
+        'color': '#E74C3C',  # Crimson
+        'size_range': (40, 130),
+        'firing_rate': (0.15, 0.25),
+        'decay_rate': (0.07, 0.12),
+        'connection_strength': 0.6,
+        'resurrection_chance': 0.08,
+    },
+    'mimic': {
+        'color': '#8E44AD',  # Purple
+        'size_range': (50, 160),
+        'firing_rate': (0.1, 0.4),
+        'decay_rate': (0.02, 0.05),
+        'connection_strength': 1.3,
+        'resurrection_chance': 0.17,
+    },
+    'attractor': {
+        'color': '#2980B9',  # Royal Blue
+        'size_range': (80, 200),
+        'firing_rate': (0.05, 0.15),
+        'decay_rate': (0.01, 0.03),
+        'connection_strength': 2.5,
+        'resurrection_chance': 0.3,
+    },
+    'sentinel': {
+        'color': '#27AE60',  # Emerald
+        'size_range': (70, 150),
+        'firing_rate': (0.2, 0.3),
+        'decay_rate': (0.02, 0.04),
+        'connection_strength': 1.0,
+        'resurrection_chance': 0.4,
     }
 }
 
@@ -62,8 +110,8 @@ class Node:
     def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
         if not node_type:
             # Random node type with weighted probability
-            weights = [0.4, 0.3, 0.15, 0.05, 0.1]  # Explorer, Connector, Memory, Inhibitor, Catalyst
-            node_type = random.choices(list(NODE_TYPES.keys()), weights=weights)[0]
+             weights = [0.1] * 11  
+             node_type = random.choices(list(NODE_TYPES.keys()), weights=weights)[0]
         
         self.id = node_id
         self.type = node_type
@@ -89,160 +137,352 @@ class Node:
         self.position = [random.uniform(-10, 10) for _ in range(3)]
         self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
         
-    def fire(self, network):
-        """Attempt to connect to other nodes with behavior based on node type."""
-        if random.random() > self.firing_rate:
-            return  # Don't fire based on firing rate
+def fire(self, network):
+    """Attempt to connect to other nodes with behavior based on node type."""
+    # Store some state for specialized nodes
+    if not hasattr(self, 'cycle_counter'):
+        self.cycle_counter = 0
+    if not hasattr(self, 'last_targets'):
+        self.last_targets = set()
         
-        self.last_fired = 0  # Reset since last fired counter
+    # Specialized firing behavior for oscillator nodes
+    if self.type == 'oscillator':
+        self.cycle_counter += 1
+        # Modulate firing rate based on sine wave
+        wave_position = np.sin(self.cycle_counter / 10) * 0.5 + 0.5  # 0 to 1 value
+        min_rate, max_rate = self.properties['firing_rate']
+        self.firing_rate = min_rate + wave_position * (max_rate - min_rate)
+    
+    # Check if we should fire based on firing rate
+    if random.random() > self.firing_rate:
+        return
         
-        if not network.nodes:
-            return
-        
-        # Different firing behaviors based on node type
-        if self.type == 'explorer':
-            # Explorer nodes try completely random connections
+    self.last_fired = 0  # Reset since last fired counter
+    
+    if not network.nodes:
+        return
+    
+    # Different firing behaviors based on node type
+    if self.type == 'explorer':
+        # Explorer nodes try completely random connections
+        target = random.choice(network.nodes)
+    
+    elif self.type == 'connector':
+        # Connector nodes prefer nodes with more connections
+        if random.random() < 0.7:  # 70% chance to pick a well-connected node
+            target = max(network.nodes, key=lambda n: len(n.connections) if n.visible else 0, default=None)
+        else:
             target = random.choice(network.nodes)
-        
-        elif self.type == 'connector':
-            # Connector nodes prefer nodes with more connections
-            if random.random() < 0.7:  # 70% chance to pick a well-connected node
-                target = max(network.nodes, key=lambda n: len(n.connections) if n.visible else 0, default=None)
+    
+    elif self.type == 'memory':
+        # Memory nodes prefer reconnecting to nodes they connected to before
+        if self.connections and random.random() < 0.8:
+            target_id = random.choice(list(self.connections.keys()))
+            target = next((n for n in network.nodes if n.id == target_id), None)
+            if not target:
+                target = random.choice(network.nodes)
+        else:
+            target = random.choice(network.nodes)
+    
+    elif self.type == 'inhibitor':
+        # Inhibitor nodes prefer connecting to highly active nodes to slow them
+        if random.random() < 0.6:
+            active_nodes = [n for n in network.nodes if n.visible]
+            if active_nodes:
+                target = max(active_nodes, key=lambda n: n.size, default=None)
             else:
                 target = random.choice(network.nodes)
-        
-        elif self.type == 'memory':
-            # Memory nodes prefer reconnecting to nodes they connected to before
-            if self.connections and random.random() < 0.8:
+        else:
+            target = random.choice(network.nodes)
+    
+    elif self.type == 'catalyst':
+        # Catalyst nodes prefer connecting to nodes that aren't well connected yet
+        if random.random() < 0.65:
+            visible_nodes = [n for n in network.nodes if n.visible]
+            if visible_nodes:
+                target = min(visible_nodes, key=lambda n: len(n.connections), default=None)
+            else:
+                target = random.choice(network.nodes)
+        else:
+            target = random.choice(network.nodes)
+    
+    # NEW SPECIAL TYPES
+    elif self.type == 'bridge':
+        # Bridge nodes try to connect clusters by finding isolated nodes
+        visible_nodes = [n for n in network.nodes if n.visible]
+        if random.random() < 0.7 and visible_nodes:
+            # Find nodes with few connections
+            isolated_nodes = [n for n in visible_nodes if 0 < len(n.connections) < 3]
+            if isolated_nodes:
+                target = random.choice(isolated_nodes)
+            else:
+                target = random.choice(network.nodes)
+        else:
+            target = random.choice(network.nodes)
+    
+    elif self.type == 'pruner':
+        # Pruner nodes specifically target nodes with many weak connections
+        if random.random() < 0.6:
+            def weak_connection_count(node):
+                return sum(1 for strength in node.connections.values() if strength < 1.0)
+                
+            visible_nodes = [n for n in network.nodes if n.visible]
+            candidates = [n for n in visible_nodes if weak_connection_count(n) > 0]
+            if candidates:
+                target = max(candidates, key=weak_connection_count)
+            else:
+                target = random.choice(network.nodes)
+        else:
+            target = random.choice(network.nodes)
+    
+    elif self.type == 'mimic':
+        # Mimic nodes copy connection patterns of successful nodes
+        if random.random() < 0.7:
+            # First, find a successful node to mimic
+            visible_nodes = [n for n in network.nodes if n.visible and n.id != self.id]
+            if visible_nodes:
+                role_model = max(visible_nodes, key=lambda n: len(n.connections))
+                # Then try to connect to nodes that the role model is connected to
+                if role_model.connections:
+                    target_id = random.choice(list(role_model.connections.keys()))
+                    target = next((n for n in network.nodes if n.id == target_id), None)
+                    if not target:
+                        target = random.choice(network.nodes)
+                else:
+                    target = random.choice(network.nodes)
+            else:
+                target = random.choice(network.nodes)
+        else:
+            target = random.choice(network.nodes)
+    
+    elif self.type == 'attractor':
+        # Attractor nodes make fewer but stronger connections and pull nodes toward them
+        # They are selective about their connections
+        if len(self.connections) >= 5 and random.random() < 0.7:
+            # If we already have enough connections, strengthen existing ones
+            if self.connections:
                 target_id = random.choice(list(self.connections.keys()))
                 target = next((n for n in network.nodes if n.id == target_id), None)
                 if not target:
                     target = random.choice(network.nodes)
             else:
                 target = random.choice(network.nodes)
-        
-        elif self.type == 'inhibitor':
-            # Inhibitor nodes prefer connecting to highly active nodes to slow them
-            if random.random() < 0.6:
-                active_nodes = [n for n in network.nodes if n.visible]
-                if active_nodes:
-                    target = max(active_nodes, key=lambda n: n.size, default=None)
-                else:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-        
-        elif self.type == 'catalyst':
-            # Catalyst nodes prefer connecting to nodes that aren't well connected yet
-            if random.random() < 0.65:
-                visible_nodes = [n for n in network.nodes if n.visible]
-                if visible_nodes:
-                    target = min(visible_nodes, key=lambda n: len(n.connections), default=None)
-                else:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-                
-        else:  # Default fallback
-            target = random.choice(network.nodes)
-        
-        if target and target.id != self.id:
-            self.connect(target)
-            self.connection_attempts += 1
-    
-    def connect(self, other_node):
-        """Form or strengthen a connection to another node."""
-        strength = self.properties['connection_strength']
-        
-        # Special case: inhibitors weaken connections
-        if self.type == 'inhibitor':
-            strength *= 0.5
-        
-        # Special case: catalysts strengthen new connections more
-        if self.type == 'catalyst' and other_node.id not in self.connections:
-            strength *= 1.5
-            
-        # Check if we need to drop a connection due to capacity limit
-        if len(self.connections) >= self.max_connections:
-            # Find weakest connection
-            weakest = min(self.connections.items(), key=lambda x: x[1], default=(None, 0))
-            if weakest[0] is not None:
-                del self.connections[weakest[0]]
-            
-        # Add or strengthen connection
-        if other_node.id in self.connections:
-            self.connections[other_node.id] += strength  # Strengthen existing connection
         else:
-            self.connections[other_node.id] = strength  # Create new connection
-            self.successful_connections += 1
-            
-            # Bidirectional connections, but respect the other node's connection strength
-            other_strength = NODE_TYPES[other_node.type]['connection_strength']
-            
-            # Check if other node needs to drop a connection
-            if len(other_node.connections) >= other_node.max_connections:
-                weakest = min(other_node.connections.items(), key=lambda x: x[1], default=(None, 0))
-                if weakest[0] is not None:
-                    del other_node.connections[weakest[0]]
-                    
-            if self.id not in other_node.connections:
-                other_node.connections[self.id] = other_strength
-                other_node.successful_connections += 1
+            # Select a random node that we haven't connected to recently
+            candidates = [n for n in network.nodes if n.id not in self.last_targets and n.id != self.id]
+            if candidates:
+                target = random.choice(candidates)
             else:
-                other_node.connections[self.id] += other_strength
-                
-            # Make the other node visible if it wasn't
-            if not other_node.visible:
-                other_node.visible = True
-                other_node.size = random.uniform(*other_node.properties['size_range']) * 0.5  # Start smaller
-    
-    def weaken_connections(self):
-        """Reduce strength of connections over time, with type-specific decay rates."""
-        min_decay, max_decay = self.properties['decay_rate']
-        
-        for node_id in list(self.connections.keys()):
-            # Apply decay
-            decay_amount = random.uniform(min_decay, max_decay)
-            self.connections[node_id] -= decay_amount
+                target = random.choice(network.nodes)
             
-            # Remove very weak connections
-            if self.connections[node_id] <= 0:
-                del self.connections[node_id]
+            # Remember this target
+            self.last_targets.add(target.id)
+            if len(self.last_targets) > 10:  # Only remember the last 10 targets
+                self.last_targets.pop()
+    
+    elif self.type == 'sentinel':
+        # Sentinel nodes maintain stable connections and are hard to disable
+        if self.connections and random.random() < 0.8:
+            # Strengthen existing connections
+            target_id = min(self.connections.items(), key=lambda x: x[1])[0]
+            target = next((n for n in network.nodes if n.id == target_id), None)
+            if not target:
+                target = random.choice(network.nodes)
+        else:
+            # Form new connections with stable nodes
+            visible_nodes = [n for n in network.nodes if n.visible and n.age > 10]
+            if visible_nodes:
+                target = random.choice(visible_nodes)
+            else:
+                target = random.choice(network.nodes)
+    
+    else:  # Default fallback
+        target = random.choice(network.nodes)
+    
+    if target and target.id != self.id:
+        self.connect(target)
+        self.connection_attempts += 1
+
+# 3. Enhance the connect method with special connection behaviors
+def connect(self, other_node):
+    """Form or strengthen a connection to another node with specialized behaviors."""
+    strength = self.properties['connection_strength']
+    
+    # Special case: inhibitors weaken connections
+    if self.type == 'inhibitor':
+        strength *= 0.5
+    
+    # Special case: catalysts strengthen new connections more
+    if self.type == 'catalyst' and other_node.id not in self.connections:
+        strength *= 1.5
+    
+    # NEW SPECIAL BEHAVIORS
+    # Attractors create stronger connections
+    if self.type == 'attractor':
+        strength *= 1.5
+        # Also pull the other node closer in 3D space
+        for i in range(3):
+            other_node.velocity[i] += (self.position[i] - other_node.position[i]) * 0.05
+    
+    # Pruners create weaker initial connections
+    if self.type == 'pruner':
+        strength *= 0.7
+    
+    # Sentinels create more stable connections
+    if self.type == 'sentinel':
+        strength *= 1.2
+    
+    # Check if we need to drop a connection due to capacity limit
+    if len(self.connections) >= self.max_connections:
+        # Find weakest connection
+        weakest = min(self.connections.items(), key=lambda x: x[1], default=(None, 0))
+        if weakest[0] is not None:
+            del self.connections[weakest[0]]
+            
+    # Add or strengthen connection
+    if other_node.id in self.connections:
+        self.connections[other_node.id] += strength  # Strengthen existing connection
+    else:
+        self.connections[other_node.id] = strength  # Create new connection
+        self.successful_connections += 1
         
-        # Update memory and size
-        self.memory = max(self.memory, self.size)  # Track highest size
+        # Bidirectional connections, but respect the other node's connection strength
+        other_strength = NODE_TYPES[other_node.type]['connection_strength']
         
-        # Size changes based on connections
-        connection_strength = sum(self.connections.values()) if self.connections else 0
-        min_size, max_size = self.properties['size_range']
+        # Special connection modifiers
+        if other_node.type == 'sentinel':
+            other_strength *= 1.2
+        elif other_node.type == 'pruner':
+            other_strength *= 0.7
+            
+        # Check if other node needs to drop a connection
+        if len(other_node.connections) >= other_node.max_connections:
+            weakest = min(other_node.connections.items(), key=lambda x: x[1], default=(None, 0))
+            if weakest[0] is not None:
+                del other_node.connections[weakest[0]]
+                
+        if self.id not in other_node.connections:
+            other_node.connections[self.id] = other_strength
+            other_node.successful_connections += 1
+        else:
+            other_node.connections[self.id] += other_strength
+            
+        # Make the other node visible if it wasn't
+        if not other_node.visible:
+            other_node.visible = True
+            other_node.size = random.uniform(*other_node.properties['size_range']) * 0.5  # Start smaller
+
+# 4. Enhance weaken_connections method with specialized behaviors
+def weaken_connections(self):
+    """Reduce strength of connections over time, with type-specific decay rates."""
+    min_decay, max_decay = self.properties['decay_rate']
+    
+    # NEW SPECIAL BEHAVIORS
+    # Sentinels have more stable connections that decay less
+    if self.type == 'sentinel':
+        min_decay *= 0.5
+        max_decay *= 0.5
+    
+    # Oscillators have connection strength that varies over time
+    if self.type == 'oscillator':
+        cycle_position = np.sin(self.cycle_counter / 15) * 0.5 + 0.5  # 0 to 1
+        # During high points in the cycle, connections actually strengthen slightly
+        if cycle_position > 0.7:  # High point in cycle
+            for node_id in list(self.connections.keys()):
+                self.connections[node_id] *= 1.05  # Strengthen by 5%
+            # Skip the rest of the decay this cycle
+            self.memory = max(self.memory, self.size)
+            self.size = max(10, min(self.properties['size_range'][1] * 1.5, self.size))
+            self.age += 1
+            self.last_fired += 1
+            return
+    
+    # The pruner aggressively weakens connections
+    if self.type == 'pruner':
+        min_decay *= 1.2
+        max_decay *= 1.2
+    
+    # Normal connection decay
+    for node_id in list(self.connections.keys()):
+        # Apply decay
+        decay_amount = random.uniform(min_decay, max_decay)
+        self.connections[node_id] -= decay_amount
         
-        # Size grows with connections but has natural decay
-        growth = connection_strength * 0.1
-        decay = self.size * 0.03
-        size_change = growth - decay
+        # Attractors resist having their connections broken
+        if self.type == 'attractor' and self.connections[node_id] <= 0:
+            # 30% chance to preserve a weak connection
+            if random.random() < 0.3:
+                self.connections[node_id] = 0.1  # Keep a minimal connection
+                continue
         
-        self.size = max(10, min(max_size * 1.5, self.size + size_change))
+        # Remove very weak connections
+        if self.connections[node_id] <= 0:
+            del self.connections[node_id]
+    
+    # Update memory and size
+    self.memory = max(self.memory, self.size)  # Track highest size
+    
+    # Size changes based on connections
+    connection_strength = sum(self.connections.values()) if self.connections else 0
+    min_size, max_size = self.properties['size_range']
+    
+    # Size growth logic
+    growth = connection_strength * 0.1
+    
+    # Mimic nodes grow faster when they successfully copy patterns
+    if self.type == 'mimic' and self.successful_connections > 0:
+        growth *= 1.2
         
-        # Visibility rules
+    decay = self.size * 0.03
+    size_change = growth - decay
+    
+    self.size = max(10, min(max_size * 1.5, self.size + size_change))
+    
+    # Visibility rules - different for sentinel nodes
+    if self.type == 'sentinel':
+        if self.size < 10 or (len(self.connections) == 0 and self.age > 50):
+            self.visible = False
+    else:
         if self.size < 15 or len(self.connections) == 0:
             self.visible = False
             
-        # Increment last fired counter
-        self.last_fired += 1
-        
-        # Age the node
-        self.age += 1
+    # Bridge nodes disappear less easily if they're connecting clusters
+    if self.type == 'bridge' and len(self.connections) >= 3:
+        self.visible = True  # Force visibility if successfully bridging
+            
+    # Increment last fired counter
+    self.last_fired += 1
     
-    def attempt_resurrection(self):
-        """Try to resurrect invisible nodes based on memory strength."""
-        resurrection_chance = self.properties['resurrection_chance']
+    # Age the node
+    self.age += 1
+
+# 5. Enhance attempt_resurrection with specialized behaviors
+def attempt_resurrection(self):
+    """Try to resurrect invisible nodes based on type-specific rules."""
+    resurrection_chance = self.properties['resurrection_chance']
+    
+    # Sentinel nodes have much higher resurrection chance
+    if self.type == 'sentinel':
+        resurrection_chance *= 1.5
+        memory_threshold = 30  # Lower threshold for sentinels
+    else:
+        memory_threshold = 50
+    
+    # Oscillators have a chance to spontaneously resurrect even with low memory
+    if self.type == 'oscillator' and random.random() < 0.05:
+        self.visible = True
+        self.size = max(40, self.memory * 0.4)
+        self.cycle_counter = 0  # Reset cycle
+        return
+    
+    # Standard resurrection check
+    if not self.visible and self.memory > memory_threshold and random.random() < resurrection_chance:
+        self.visible = True
+        self.size = self.memory * 0.6  # Return at 60% previous strength
         
-        if not self.visible and self.memory > 50 and random.random() < resurrection_chance:
-            self.visible = True
-            self.size = self.memory * 0.6  # Return at 60% previous strength
-            # Give it a small "energy boost"
-            min_size, max_size = self.properties['size_range']
-            self.size = min(max_size, self.size * 1.2)
+        # Give attractor nodes a larger initial boost
+        if self.type == 'attractor':
+            self.size *= 1.2    # Initialize with random connections to other nodes
             
     def update_position(self, network):
         """Update the 3D position of the node based on connections and natural movement."""
@@ -1233,16 +1473,13 @@ def save_network(n_clicks):
     prevent_initial_call=True
 )
 def load_network(n_clicks, filename, sim_state):
+    global simulator  # Declare at the start
     if n_clicks and filename:
-        # Stop current simulation
-        simulator.stop()
-        
-        # Load new simulation
+        simulator.stop()  # Now this is valid
         new_simulator = NetworkSimulator.load(filename)
-        
-        # Replace the global simulator
-        global simulator
         simulator = new_simulator
+        
+    
         
         if sim_state:
             sim_state["running"] = False
