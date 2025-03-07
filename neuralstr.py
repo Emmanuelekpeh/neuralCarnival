@@ -728,15 +728,15 @@ class NeuralNetwork:
         return pos
 
     def visualize(self, mode='3d'):
-        """Visualize the network using Three.js"""
-        if not self.nodes:
-            return None
-            
-        # Convert network data to Three.js format
-        data = {
-            'nodes': [
-                {
-                    'id': node.id,
+        """Visualize the network using Plotly."""
+        if mode == '3d':
+            return self._visualize_3d()
+        return self._visualize_2d()
+
+    def _visualize_3d(self):
+        """Generate 3D visualization of the network."""
+        fig = go.Figure()
+        pos = self.calculate_3d_layout()
                     'position': node.position,
                     'size': node.size,
                     'color': NODE_TYPES[node.type]['color'],
@@ -1222,28 +1222,32 @@ def create_ui():
                 st.success(f"Loaded network from {selected_file}")
     return viz_container, stats_container
 
-def _initialize_network():
-    """Initialize network with basic configuration."""
-    if 'simulation_running' not in st.session_state:
-        st.session_state.simulation_running = False
+def _initialize_session_state():
+    """Initialize all session state variables."""
+    initial_states = {
+        'simulation_running': False,
+        'viz_mode': '3d',
+        'update_interval': 0.05,
+        'frame_count': 0,
+        'animation_enabled': True,
+        'simulation_speed': 1.0,
+        'last_update': time.time()
+    }
+    
+    for key, value in initial_states.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+            
     if 'simulator' not in st.session_state:
         st.session_state.simulator = NetworkSimulator()
-        # Add initial node
         initial_node = st.session_state.simulator.network.add_node(
             visible=True,
             node_type='explorer'
         )
         initial_node.energy = 100.0
-    if 'viz_mode' not in st.session_state:
-        st.session_state.viz_mode = '3d'  # Set default visualization mode
-    if 'update_interval' not in st.session_state:
-        st.session_state.update_interval = 0.05  # Faster updates
-    if 'last_update' not in st.session_state:
-        st.session_state.last_update = time.time()
-    if 'frame_count' not in st.session_state:
-        st.session_state.frame_count = 0
-    if 'animation_enabled' not in st.session_state:
-        st.session_state.animation_enabled = True
+        
+    if 'main_tabs' not in st.session_state:
+        st.session_state.main_tabs = None
 
 def update_display():
     """Update the visualization with unique keys for each Plotly chart."""
@@ -1340,15 +1344,28 @@ if cp is not None:
 else:
     st.sidebar.warning("⚠️ Running in CPU-only mode")
 
-# Initialize session state
-_initialize_network()
+# Initialize all session state variables
+_initialize_session_state()
 
 # Create display containers
 viz_container, stats_container = create_ui()
 
-# Run simulation loop
+# Main simulation loop
 if st.session_state.simulation_running:
-    run_simulation()
+    current_time = time.time()
+    elapsed = current_time - st.session_state.last_update
+    
+    if elapsed > st.session_state.update_interval:
+        steps = max(1, int(st.session_state.simulation_speed * 3))
+        with st.session_state.simulator.lock:
+            for _ in range(steps):
+                st.session_state.simulator.network.step()
+        
+        update_display()
+        st.session_state.last_update = current_time
+        st.session_state.frame_count += 1
+        time.sleep(0.01)  # Small delay to prevent excessive CPU usage
+        st.rerun()
 else:
     update_display()  # Show current state when paused
 
