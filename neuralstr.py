@@ -617,23 +617,31 @@ class NeuralNetwork:
                 elif node.last_fired < 5:
                     activity_level = 1.0 - (node.last_fired / 5.0)
                 grid[y_idx, x_idx] += activity_level * (node.size / 100)
-        fig = go.Figure(data=go.Heatmap(
-            z=grid,
-            x=np.linspace(x_range[0], x_range[1], grid_size),
-            y=np.linspace(y_range[0], y_range[1], grid_size),
-            colorscale='Viridis',
-            showscale=True,
-            opacity=0.9  # Increased from 0.8
-        ))
-        fig.update_layout(
-            title="Neural Activity Heatmap",
-            xaxis_title="X Position",
-            yaxis_title="Y Position",
-            width=600,
-            height=600,
-            template="plotly_white"  # Changed from plotly_dark to plotly_white
-        )
-        return fig
+        
+        try:
+            fig = go.Figure(data=go.Heatmap(
+                z=grid,
+                x=np.linspace(x_range[0], x_range[1], grid_size),
+                y=np.linspace(y_range[0], y_range[1], grid_size),
+                colorscale='Viridis',
+                showscale=True,
+                opacity=0.9  # Increased from 0.8
+            ))
+            fig.update_layout(
+                title="Neural Activity Heatmap",
+                xaxis_title="X Position",
+                yaxis_title="Y Position",
+                width=600,
+                height=600,
+                template="plotly_white"  # Changed from plotly_dark to plotly_white
+            )
+            return fig
+        except Exception as e:
+            # Return a simple empty figure if there's an error
+            empty_fig = go.Figure()
+            empty_fig.add_annotation(text=f"Error generating heatmap: {str(e)[:50]}...", 
+                                    showarrow=False, font=dict(size=12))
+            return empty_fig
 
     def _prune_weak_connections(self, node):
         """Prune connections that are too weak."""
@@ -1426,6 +1434,8 @@ def create_ui():
         # Add refresh button to force visualization update
         if st.button("🔄 Refresh Visuals", help="Force refresh all visualizations"):
             st.session_state.force_refresh = True
+            # Add a small delay to ensure the refresh happens after the UI updates
+            time.sleep(0.2)
     
     return viz_container, stats_container
 
@@ -1470,7 +1480,10 @@ def _initialize_session_state():
         'cached_frame': -1,  # Track the last frame when visuals were refreshed
         'use_dark_mode': False,  # Default to light mode
         'force_refresh': False,  # Add flag for manual refresh
-        'last_visual_refresh': 0  # Track last visual refresh time
+        'last_visual_refresh': 0,  # Track last visual refresh time
+        'last_viz_mode': '3d',  # Track mode changes
+        'display_container': None,  # Container for stable display
+        'viz_error_count': 0  # Track visualization errors for resilience
     }
     
     for key, value in initial_states.items():
@@ -1515,31 +1528,45 @@ def update_display():
         4. Switch between 3D and 2D visualization modes
         """)
     
-    # Create all visualizations on first run even if they're not shown
-    if 'network_fig' not in st.session_state or st.session_state.get('force_refresh', False):
-        # Apply dark/light theme preference to visualizations
-        dark_mode = st.session_state.get('use_dark_mode', False)
-        template = "plotly_dark" if dark_mode else "plotly_white"
-        
-        # Always generate all visualizations and keep them in session state
-        st.session_state.network_fig = st.session_state.simulator.network.visualize(mode=st.session_state.viz_mode)
-        st.session_state.network_fig.update_layout(template=template)
-        
-        st.session_state.activity_fig = st.session_state.simulator.network.get_activity_heatmap()
-        st.session_state.activity_fig.update_layout(template=template)
-        
-        st.session_state.stats_fig = st.session_state.simulator.network.get_stats_figure()
-        if st.session_state.stats_fig:
-            st.session_state.stats_fig.update_layout(template=template)
-        
-        st.session_state.pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
-        st.session_state.pattern_fig.update_layout(template=template)
-        
-        st.session_state.strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
-        st.session_state.strength_fig.update_layout(template=template)
-        
-        # Reset force refresh flag
-        st.session_state.force_refresh = False
+    # Always create visualizations if they don't exist yet, regardless of force_refresh
+    needs_creation = 'network_fig' not in st.session_state or st.session_state.get('force_refresh', False)
+    
+    # Also check if we need to recreate based on mode change
+    mode_changed = st.session_state.get('last_viz_mode', '3d') != st.session_state.viz_mode
+    if mode_changed:
+        needs_creation = True
+        st.session_state.last_viz_mode = st.session_state.viz_mode
+    
+    if needs_creation:
+        with st.spinner("Generating visualizations..."):
+            # Apply dark/light theme preference to visualizations
+            dark_mode = st.session_state.get('use_dark_mode', False)
+            template = "plotly_dark" if dark_mode else "plotly_white"
+            
+            try:
+                # Always generate all visualizations and keep them in session state
+                st.session_state.network_fig = st.session_state.simulator.network.visualize(mode=st.session_state.viz_mode)
+                st.session_state.network_fig.update_layout(template=template)
+                
+                st.session_state.activity_fig = st.session_state.simulator.network.get_activity_heatmap()
+                st.session_state.activity_fig.update_layout(template=template)
+                
+                st.session_state.stats_fig = st.session_state.simulator.network.get_stats_figure()
+                if st.session_state.stats_fig:
+                    st.session_state.stats_fig.update_layout(template=template)
+                
+                st.session_state.pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
+                st.session_state.pattern_fig.update_layout(template=template)
+                
+                st.session_state.strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
+                st.session_state.strength_fig.update_layout(template=template)
+                
+                # Reset force refresh flag
+                st.session_state.force_refresh = False
+                st.session_state.last_visual_refresh = time.time()
+            except Exception as e:
+                # Log errors but don't crash
+                print(f"Error generating visualizations: {e}")
     
     # Update network summary on every frame (lightweight)
     st.session_state.network_summary = st.session_state.simulator.network.get_network_summary()
@@ -1553,71 +1580,86 @@ def update_display():
     tabs = st.tabs(tab_names)
     active_tab = st.session_state.active_tab
     
+    # Safety check to ensure all visualization objects exist
+    def ensure_visualization_exists():
+        """Make sure all visualization objects exist to avoid errors."""
+        if 'network_fig' not in st.session_state:
+            st.session_state.force_refresh = True
+            return False
+        return True
+    
     # Show content based on active tab
-    with tabs[0]:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            st.header("Neural Network")
-            st.plotly_chart(st.session_state.network_fig, use_container_width=True, key="network_viz")
-        
-        with col2:
-            st.header("Activity Heatmap")
-            st.plotly_chart(st.session_state.activity_fig, use_container_width=True, key="activity_viz")
-
-        # Network summary
-        summary = st.session_state.network_summary
-        st.markdown(f"""
-        **Network Status**: {summary['visible_nodes']} active nodes of {summary['total_nodes']} total  
-        **Connections**: {summary['total_connections']} ({summary['avg_connections']} avg per node)  
-        **Runtime**: {summary['runtime']}
-        """)
-
-    with tabs[1]:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.header("Network Statistics")
-            if 'stats_fig' in st.session_state and st.session_state.stats_fig:
-                st.plotly_chart(st.session_state.stats_fig, use_container_width=True, key="stats_viz")
-        
-        with col2:
-            st.header("Firing Patterns")
-            st.plotly_chart(st.session_state.pattern_fig, use_container_width=True, key="pattern_viz")
+    if ensure_visualization_exists():
+        with tabs[0]:
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.header("Neural Network")
+                # Use a container to help stabilize the visualization
+                with st.container():
+                    st.plotly_chart(st.session_state.network_fig, use_container_width=True, key="network_viz")
             
-            st.header("Connection Strength")
-            st.plotly_chart(st.session_state.strength_fig, use_container_width=True, key="strength_viz")
+            with col2:
+                st.header("Activity Heatmap")
+                with st.container():
+                    st.plotly_chart(st.session_state.activity_fig, use_container_width=True, key="activity_viz")
 
-    with tabs[2]:
-        # Help tab content (unchanged)
-        st.markdown("""
-        ## How It Works
-        
-        This simulation models a dynamic neural network with different node types:
-        
-        - **Explorer**: Creates random connections
-        - **Connector**: Links highly-connected nodes
-        - **Memory**: Maintains stable connections
-        - **Catalyst**: Accelerates nearby activity
-        - **Oscillator**: Creates rhythmic activations
-        - And many more...
-        
-        Nodes form connections, transmit signals, and can die or resurrect based on their energy levels.
-        
-        ## Auto-generation of Nodes
-        
-        By default, new nodes are automatically added over time based on the node generation rate.
-        New nodes are more likely to be of types that have been successful in forming connections.
-        
-        ## Troubleshooting
-        
-        **Visualization lagging?**
-        - Increase the display update interval
-        - Switch to 2D mode
-        - Reduce the maximum number of nodes
-        
-        **Want more connections?**
-        - Increase the learning rate
-        - Increase the simulation speed
-        """)
+            # Network summary
+            summary = st.session_state.network_summary
+            st.markdown(f"""
+            **Network Status**: {summary['visible_nodes']} active nodes of {summary['total_nodes']} total  
+            **Connections**: {summary['total_connections']} ({summary['avg_connections']} avg per node)  
+            **Runtime**: {summary['runtime']}
+            """)
+
+        with tabs[1]:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.header("Network Statistics")
+                if 'stats_fig' in st.session_state and st.session_state.stats_fig:
+                    with st.container():
+                        st.plotly_chart(st.session_state.stats_fig, use_container_width=True, key="stats_viz")
+            
+            with col2:
+                st.header("Firing Patterns")
+                with st.container():
+                    st.plotly_chart(st.session_state.pattern_fig, use_container_width=True, key="pattern_viz")
+                
+                st.header("Connection Strength")
+                with st.container():
+                    st.plotly_chart(st.session_state.strength_fig, use_container_width=True, key="strength_viz")
+
+        with tabs[2]:
+            # Help tab content (unchanged)
+            st.markdown("""
+            ## How It Works
+            
+            This simulation models a dynamic neural network with different node types:
+            
+            - **Explorer**: Creates random connections
+            - **Connector**: Links highly-connected nodes
+            - **Memory**: Maintains stable connections
+            - **Catalyst**: Accelerates nearby activity
+            - **Oscillator**: Creates rhythmic activations
+            - And many more...
+            
+            Nodes form connections, transmit signals, and can die or resurrect based on their energy levels.
+            
+            ## Auto-generation of Nodes
+            
+            By default, new nodes are automatically added over time based on the node generation rate.
+            New nodes are more likely to be of types that have been successful in forming connections.
+            
+            ## Troubleshooting
+            
+            **Visualization lagging?**
+            - Increase the display update interval
+            - Switch to 2D mode
+            - Reduce the maximum number of nodes
+            
+            **Want more connections?**
+            - Increase the learning rate
+            - Increase the simulation speed
+            """)
 
     # Track tab changes using session state
     for i, tab_name in enumerate(tab_names):
@@ -1655,20 +1697,28 @@ if st.session_state.simulation_running:
         visual_refresh_elapsed = current_time - st.session_state.get('last_visual_refresh', 0)
         visual_refresh_interval = st.session_state.get('refresh_rate', 5) * st.session_state.display_update_interval
         
-        # Force visual refresh periodically (not just when simulation pauses)
+        # Force visual refresh periodically or when changing tabs
         if visual_refresh_elapsed >= visual_refresh_interval:
             st.session_state.force_refresh = True
-            st.session_state.last_visual_refresh = current_time
         
         # Always update display
-        update_display()
+        try:
+            update_display()
+        except Exception as e:
+            # Add resilience against rendering errors
+            st.error(f"Display error: {str(e)[:100]}... Click 'Refresh Visuals' in sidebar.")
+            st.session_state.viz_error_count += 1
+            if st.session_state.viz_error_count > 5:
+                st.session_state.force_refresh = True
+                st.session_state.viz_error_count = 0
         
-        # Use rerun with a minimal delay
-        time.sleep(0.1)
+        # Use rerun with a small delay to prevent flickering
+        time.sleep(0.15)
         st.rerun()
 else:
     # When paused, refresh visuals and update display
-    st.session_state.force_refresh = True
+    if 'network_fig' not in st.session_state:
+        st.session_state.force_refresh = True
     update_display()
 
 # Create requirements file if needed
