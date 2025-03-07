@@ -1181,43 +1181,53 @@ def parse_contents(contents, filename):
 
 def create_ui():
     """Create the main Streamlit UI."""
-    # Create display containers - removing the Three.js component reference
+    # Create display containers
     viz_container = st.empty()
     stats_container = st.empty()
     
-    # Sidebar controls
+    # Sidebar controls with improved organization
     with st.sidebar:
-        st.header("Simulation Controls")
-        col1, col2 = st.columns(2)
+        # Top section - Main controls
+        st.markdown("## Simulation Controls")
+        st.markdown("---")
+        
+        col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("▶️ Start", key="start_sim"):
-                st.session_state.simulator.start()
+            if st.button("▶️ Start", key="start_sim", use_container_width=True):
+                st.session_state.simulator.start(steps_per_second=st.session_state.get('speed', 1.0))
                 st.session_state.simulation_running = True
         with col2:
-            if st.button("⏸️ Stop", key="stop_sim"):
+            if st.button("⏸️ Pause", key="stop_sim", use_container_width=True):
                 st.session_state.simulator.stop()
                 st.session_state.simulation_running = False
-        if st.button("🔄 Reset", key="reset_sim"):
-            st.session_state.simulator.stop()
-            st.session_state.simulator = NetworkSimulator()
-            st.session_state.simulator.network.add_node(visible=True)
-            st.session_state.simulation_running = False
-        # Simulation parameters
-        st.header("Parameters")
-        speed = st.slider("Simulation Speed", 0.2, 10.0, 1.0, 0.2)
-        learning_rate = st.slider("Learning Rate", 0.01, 0.5, 0.1, 0.01)
+        with col3:
+            if st.button("🔄 Reset", key="reset_sim", use_container_width=True):
+                st.session_state.simulator.stop()
+                st.session_state.simulator = NetworkSimulator()
+                # Auto-populate with initial nodes
+                auto_populate_nodes(st.session_state.simulator.network, 15)
+                st.session_state.simulation_running = False
         
-        # Visualization mode selector
-        st.header("Visualization")
+        # Parameters section
+        st.markdown("## Parameters")
+        st.markdown("---")
+        speed = st.slider("Simulation Speed", 0.2, 10.0, 1.0, 0.2,
+                          help="Control how fast the simulation runs")
+        learning_rate = st.slider("Learning Rate", 0.01, 0.5, 0.1, 0.01,
+                                 help="Controls how quickly nodes learn from connections")
+        
+        # Visualization section
+        st.markdown("## Visualization")
+        st.markdown("---")
         viz_mode = st.radio(
             "Display Mode", 
             options=['3d', '2d'], 
             index=0 if st.session_state.viz_mode == '3d' else 1,
-            key='viz_mode_selector'
+            help="Choose between 3D and 2D visualization"
         )
-        # Update session state viz_mode based on radio selection
         st.session_state.viz_mode = viz_mode
 
+        # Apply simulation parameters if running
         if st.session_state.simulation_running:
             st.session_state.simulator.send_command({
                 "type": "set_speed",
@@ -1227,28 +1237,64 @@ def create_ui():
                 "type": "set_learning_rate",
                 "value": learning_rate
             })
-        # Node management
-        st.header("Node Management")
-        node_type = st.selectbox("Add Node Type", list(NODE_TYPES.keys()))
-        if st.button("➕ Add Node"):
-            st.session_state.simulator.send_command({
-                "type": "add_node",
-                "visible": True,
-                "node_type": node_type
-            })
-        # Save/Load functionality
-        st.header("Save / Load")
-        if st.button("💾 Save Network"):
-            filename = st.session_state.simulator.save()
-            st.success(f"Network saved as {filename}")
-        saved_files = list_saved_simulations()
-        if saved_files:
-            selected_file = st.selectbox("Select Network", saved_files)
-            if st.button("📂 Load Network"):
-                st.session_state.simulator = NetworkSimulator.load(selected_file)
-                st.success(f"Loaded network from {selected_file}")
+        
+        # Advanced section - Node Management
+        with st.expander("Advanced Options", expanded=False):
+            st.markdown("### Node Management")
+            
+            # Auto-populate button
+            col1, col2 = st.columns(2)
+            with col1:
+                node_count = st.number_input("Node Count", 5, 50, 10, 1)
+            with col2:
+                if st.button("🧠 Auto-Populate", key="auto_populate"):
+                    auto_populate_nodes(st.session_state.simulator.network, node_count)
+                    st.success(f"Added {node_count} nodes of various types")
+            
+            # Manual node addition
+            node_type = st.selectbox("Add Node Type", list(NODE_TYPES.keys()))
+            if st.button("➕ Add Single Node"):
+                st.session_state.simulator.send_command({
+                    "type": "add_node",
+                    "visible": True,
+                    "node_type": node_type
+                })
+            
+            # Save/Load functionality
+            st.markdown("### Save / Load")
+            if st.button("💾 Save Network"):
+                filename = st.session_state.simulator.save()
+                st.success(f"Network saved as {filename}")
+            
+            saved_files = list_saved_simulations()
+            if saved_files:
+                selected_file = st.selectbox("Select Network", saved_files)
+                if st.button("📂 Load Network"):
+                    st.session_state.simulator = NetworkSimulator.load(selected_file)
+                    st.success(f"Loaded network from {selected_file}")
     
     return viz_container, stats_container
+
+def auto_populate_nodes(network, count=10):
+    """Add multiple nodes of different types to kickstart the network."""
+    # Make sure all node types are represented
+    essential_types = ['explorer', 'connector', 'memory', 'catalyst', 'oscillator']
+    for node_type in essential_types:
+        network.add_node(visible=True, node_type=node_type)
+    
+    # Add remaining nodes with random types
+    remaining = max(0, count - len(essential_types))
+    for _ in range(remaining):
+        node_type = random.choice(list(NODE_TYPES.keys()))
+        network.add_node(visible=True, node_type=node_type)
+    
+    # Add some initial connections to get things started
+    visible_nodes = [n for n in network.nodes if n.visible]
+    for node in visible_nodes[:len(visible_nodes)//2]:
+        targets = random.sample(visible_nodes, min(3, len(visible_nodes)))
+        for target in targets:
+            if node.id != target.id:
+                node.connect(target)
 
 def _initialize_session_state():
     """Initialize all session state variables."""
@@ -1268,20 +1314,31 @@ def _initialize_session_state():
             
     if 'simulator' not in st.session_state:
         st.session_state.simulator = NetworkSimulator()
-        initial_node = st.session_state.simulator.network.add_node(
-            visible=True,
-            node_type='explorer'
-        )
-        initial_node.energy = 100.0
-        
-    # Remove the main_tabs initialization as we'll create tabs fresh each time
+        # Auto-populate with initial nodes instead of just one
+        auto_populate_nodes(st.session_state.simulator.network, 15)
+
+# ...existing code...
 
 def update_display():
     """Update the visualization with unique keys for each Plotly chart."""
     _ensure_node_signals()
     
+    # Add welcome message and instructions
+    if st.session_state.frame_count == 0:
+        st.markdown("""
+        # Neural Network Simulation
+        
+        This simulation shows how neural networks evolve and grow organically.
+        
+        **Instructions:**
+        1. Click **▶️ Start** to begin the simulation
+        2. Observe how different node types interact
+        3. Use the sidebar to adjust simulation parameters
+        4. Switch between 3D and 2D visualization modes
+        """)
+    
     # Create tabs directly without storing them in session state
-    tabs = st.tabs(["Network View", "Analysis"])
+    tabs = st.tabs(["Network View", "Analysis", "Help"])
     
     with tabs[0]:
         # Network visualization
@@ -1313,6 +1370,34 @@ def update_display():
                 st.header("Connection Strength")
                 strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
                 st.plotly_chart(strength_fig, use_container_width=True, key=f"strength_viz_{st.session_state.frame_count}")
+
+    with tabs[2]:
+        # Help tab
+        st.markdown("""
+        ## How It Works
+        
+        This simulation models a dynamic neural network with different node types:
+        
+        - **Explorer**: Creates random connections
+        - **Connector**: Links highly-connected nodes
+        - **Memory**: Maintains stable connections
+        - **Catalyst**: Accelerates nearby activity
+        - **Oscillator**: Creates rhythmic activations
+        - And many more...
+        
+        Nodes form connections, transmit signals, and can die or resurrect based on their energy levels.
+        
+        ## Troubleshooting
+        
+        **Nodes not active?**
+        - Make sure to press the Start button
+        - Add more nodes with Auto-Populate
+        - Increase the simulation speed
+        
+        **Visualization too cluttered?**
+        - Switch to 2D mode
+        - Restart with fewer nodes
+        """)
 
 # Replace the main simulation loop with this optimized version
 def run_simulation():
