@@ -1,3 +1,4 @@
+# Import dependencies first
 import streamlit as st
 import numpy as np
 import networkx as nx
@@ -15,25 +16,44 @@ from collections import deque
 from scipy.spatial import cKDTree
 from datetime import datetime
 
-# Try to import cupy for GPU acceleration, fallback to numpy if not available
+# Try to import cupy for GPU acceleration
 try:
     import cupy as cp
 except ImportError:
     cp = None
 
-# Initialize Streamlit config first
+# Initialize Streamlit config ONCE at the very top
 st.set_page_config(page_title="Neural Network Simulation", layout="wide")
 
-# Initialize session state before anything else
-if 'initialized' not in st.session_state:
-    st.session_state.initialized = True
-    _initialize_session_state()
+# Define NODE_TYPES first since it's used by the Node class
+NODE_TYPES = {
+    'explorer': {
+        'color': '#FF5733',
+        'size_range': (50, 200),
+        'firing_rate': (0.2, 0.5),
+        'decay_rate': (0.03, 0.08),
+        'connection_strength': 1.5,
+        'resurrection_chance': 0.15
+    },
+    'memory': {
+        'color': '#9B59B6',
+        'size_range': (80, 180),
+        'firing_rate': (0.05, 0.15),
+        'decay_rate': (0.01, 0.03),
+        'connection_strength': 1.2,
+        'resurrection_chance': 0.25
+    },
+    'connector': {
+        'color': '#33A8FF',
+        'size_range': (100, 250),
+        'firing_rate': (0.1, 0.3),
+        'decay_rate': (0.02, 0.05),
+        'connection_strength': 2.0,
+        'resurrection_chance': 0.2
+    }
+    # ...add other node types as needed...
+}
 
-# Initialize the app - MOVED TO TOP OF FILE FOR PROPER INITIALIZATION
-st.set_page_config(page_title="Neural Network Simulation", layout="wide")
-st.title("Neural Network Growth Simulation")
-
-# Initialize all session state variables before they're accessed
 def _initialize_session_state():
     """Initialize all session state variables."""
     initial_states = {
@@ -49,7 +69,7 @@ def _initialize_session_state():
         'last_update': time.time(),
         'last_display_update': time.time(),
         'show_tendrils': True,
-        'tendril_duration': 30,  # Increased for better visibility
+        'tendril_duration': 30,
         'refresh_rate': 5,
         'cached_frame': -1,
         'use_dark_mode': False,
@@ -62,236 +82,53 @@ def _initialize_session_state():
         'buffered_rendering': True,
         'render_interval': 0.5,
         'render_frequency': 5,
+        'initialized': True  # Add flag to prevent double initialization
     }
     
     for key, value in initial_states.items():
         if key not in st.session_state:
             st.session_state[key] = value
-            
+
+# Initialize session state before anything else
+if not st.session_state.get('initialized', False):
+    _initialize_session_state()
+    # Initialize simulator after session state is set up
     if 'simulator' not in st.session_state:
         st.session_state.simulator = NetworkSimulator()
         # Start with just a few seed nodes
         for _ in range(3):
             st.session_state.simulator.network.add_node(visible=True)
 
-# Call initialization BEFORE any access to session_state
-_initialize_session_state()
-
-# GPU status indicator
+# GPU status indicator - after initialization
 if cp is not None:
     st.sidebar.success("🚀 GPU acceleration enabled")
 else:
     st.sidebar.warning("⚠️ Running in CPU-only mode")
 
-# Fix the 2D visualization method which wasn't working properly
-def _visualize_2d(self):
-    """Create 2D visualization of the network."""
-    # Create a new figure
-    fig = go.Figure()
-    
-    # Get positions - use only x and y coordinates from 3D positions
-    pos = {}
-    for node in self.nodes:
-        if node.visible:
-            pos[node.id] = (node.position[0], node.position[1])
-    
-    if not pos:  # No visible nodes
-        fig.add_annotation(
-            text="No visible nodes yet",
-            xref="paper", yref="paper",
-            x=0.5, y=0.5, showarrow=False,
-            font=dict(size=20)
-        )
-        return fig
-    
-    # Create edge traces - Each edge gets its own trace to control individual colors
-    connection_traces = []
-    max_strength = 1
-    for node in self.nodes:
-        if node.visible and node.id in pos:
-            for target_id, strength in node.connections.items():
-                if target_id in pos:
-                    x0, y0 = pos[node.id]
-                    x1, y1 = pos[target_id]
-                    if strength > max_strength:
-                        max_strength = strength
-                    
-                    # Calculate normalized strength for color
-                    norm_strength = strength / 10.0  # Normalize but cap at 10
-                    
-                    # Assign color based on strength
-                    color = f'rgba({min(255, int(norm_strength * 255))}, 100, {max(0, 255 - int(norm_strength * 255))}, {min(0.8, 0.2 + norm_strength * 0.6)})'
-                    
-                    trace = go.Scatter(
-                        x=[x0, x1, None],  # None creates a break in the line
-                        y=[y0, y1, None],
-                        mode='lines',
-                        line=dict(
-                            width=1 + norm_strength * 4,  # Width based on strength
-                            color=color
-                        ),
-                        hoverinfo='none',
-                        showlegend=False
-                    )
-                    connection_traces.append(trace)
-    
-    # Render tendrils (in-progress connections) with special styling
-    tendril_traces = []
-    for node in self.nodes:
-        if node.visible and hasattr(node, 'signal_tendrils'):
-            for tendril in node.signal_tendrils:
-                target_id = tendril['target_id']
-                if target_id < len(self.nodes) and node.id in pos and target_id in pos:
-                    x0, y0 = pos[node.id]
-                    x1, y1 = pos[target_id]
-                    
-                    # Create curved tendril path
-                    progress = tendril['progress']
-                    points = 20  # More points for smoother curves
-                    x_vals = []
-                    y_vals = []
-                    
-                    # Generate curve with random offset
-                    curve_offset = random.uniform(-0.5, 0.5)
-                    
-                    # Calculate midpoint with offset
-                    mid_x = (x0 + x1) / 2 + curve_offset
-                    mid_y = (y0 + y1) / 2 + curve_offset
-                    
-                    # Generate points
-                    for i in range(int(points * progress) + 1):
-                        t = i / points
-                        # Quadratic Bezier curve
-                        x = (1-t)**2 * x0 + 2*(1-t)*t * mid_x + t**2 * x1
-                        y = (1-t)**2 * y0 + 2*(1-t)*t * mid_y + t**2 * y1
-                        x_vals.append(x)
-                        y_vals.append(y)
-                    
-                    # Color based on tendril properties
-                    if tendril.get('success', False):
-                        color = f'rgba(255,50,50,{0.7 - progress*0.3})'  # Red for successful
-                    else:
-                        color = f'rgba(50,50,255,{0.7 - progress*0.3})'  # Blue for exploration
-                    
-                    tendril_trace = go.Scatter(
-                        x=x_vals,
-                        y=y_vals,
-                        mode='lines',
-                        line=dict(
-                            width=2 + tendril.get('strength', 1) * 0.5,
-                            color=color
-                        ),
-                        hoverinfo='none',
-                        showlegend=False
-                    )
-                    tendril_traces.append(tendril_trace)
-    
-    # Create node traces by type
-    node_traces = []
-    for node_type, properties in NODE_TYPES.items():
-        # Get all nodes of this type
-        nodes_of_type = [n for n in self.nodes if n.visible and n.type == node_type and n.id in pos]
+# Rest of the classes and functions
+class Node:
+    def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
+        """Initialize a node with given properties."""
+        if not node_type:
+            # Fix: Make sure weights match NODE_TYPES length
+            node_types = list(NODE_TYPES.keys())
+            weights = [1.0] * len(node_types)  # Equal weights for all types
+            node_type = random.choices(node_types, weights=weights)[0]
         
-        if not nodes_of_type:
-            continue
-            
-        # Extract positions and sizes
-        x_vals = [pos[n.id][0] for n in nodes_of_type]
-        y_vals = [pos[n.id][1] for n in nodes_of_type]
-        sizes = [n.size/2 for n in nodes_of_type]  # Scale down for 2D
-        node_ids = [n.id for n in nodes_of_type]
-        hover_texts = [f"Node {n.id}<br>Type: {n.type}<br>Energy: {n.energy:.1f}<br>Connections: {len(n.connections)}" 
-                      for n in nodes_of_type]
+        self.id = node_id
+        self.type = node_type
+        self.properties = NODE_TYPES[node_type]
+        self.connections = {}
         
-        # Activation colors - brighter if activated
-        colors = []
-        for n in nodes_of_type:
-            base_color = properties['color']
-            if hasattr(n, 'activation_level') and n.activation_level > 0.1:
-                # Brighten color based on activation
-                r, g, b = int(base_color[1:3], 16), int(base_color[3:5], 16), int(base_color[5:7], 16)
-                boost = n.activation_level * 0.6
-                r = min(255, int(r + (255-r) * boost))
-                g = min(255, int(g + (255-g) * boost))
-                b = min(255, int(b + (255-b) * boost))
-                color = f'#{r:02x}{g:02x}{b:02x}'
-            else:
-                color = base_color
-            colors.append(color)
+        # Initialize properties based on node type
+        min_size, max_size = self.properties['size_range']
+        self.size = random.uniform(min_size, max_size)
         
-        # Create trace for this node type
-        node_trace = go.Scatter(
-            x=x_vals,
-            y=y_vals,
-            mode='markers',
-            marker=dict(
-                size=sizes,
-                color=colors,
-                line=dict(width=1, color='rgba(255,255,255,0.8)')
-            ),
-            text=hover_texts,
-            hoverinfo='text',
-            name=node_type
-        )
-        node_traces.append(node_trace)
-    
-    # Add all traces to the figure - order matters for layering
-    for trace in connection_traces:
-        fig.add_trace(trace)
-    for trace in tendril_traces:
-        fig.add_trace(trace)
-    for trace in node_traces:
-        fig.add_trace(trace)
+        min_rate, max_rate = self.properties['firing_rate']
+        self.firing_rate = random.uniform(min_rate, max_rate)
         
-    # Layout tweaks
-    fig.update_layout(
-        showlegend=True,
-        legend=dict(
-            yanchor="top", y=0.99,
-            xanchor="left", x=0.01,
-            bgcolor="rgba(255,255,255,0.8)"
-        ),
-        xaxis=dict(
-            showgrid=False,
-            zeroline=False,
-            showticklabels=False,
-            range=[-15, 15]
-        ),
-        yaxis=dict(
-            showgrid=False,
-            zeroline=False,
-            showticklabels=False,
-            scaleanchor="x",
-            scaleratio=1,
-            range=[-15, 15]
-        ),
-        width=800,
-        height=800,
-        margin=dict(l=20, r=20, t=30, b=20),
-        hovermode='closest',
-        template="plotly_white",
-        paper_bgcolor='rgba(255,255,255,0.9)',
-        plot_bgcolor='rgba(255,255,255,0.9)'
-    )
-    
-    return fig
+        # ...rest of initialization code...
 
-# Replace the existing 2D visualization method
-NeuralNetwork._visualize_2d = _visualize_2d
-
-# Fix the main simulation loop - moved AFTER session state initialization
-def run_simulation_loop():
-    """Main simulation loop with optimized display updates."""
-    if st.session_state.simulation_running:
-        current_time = time.time()
-        display_elapsed = current_time - st.session_state.get('last_display_update', 0)
-        
-        # Only update the display at the specified interval
-        # Note: Rendering happens in background now, so this is just for UI updates
-        if display_elapsed > st.session_state.display_update_interval:
-            st.session_state.frame_count += 1
-            st.session_state.last_display_update = current_time
-            
     def connect(self, other_node):
         strength = self.properties['connection_strength']
         if len(self.connections) < self.max_connections:
@@ -1347,30 +1184,6 @@ def parse_contents(contents, filename):
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
     try:
-        if filename.endswith('.pkl'):
-            return pickle.loads(decoded)
-        else:
-            st.error(f"Unsupported file type: {filename}")
-    except Exception as e:
-        st.error(f"Error loading file: {str(e)}")
-    return None
-
-# Add an advanced rendering manager class
-class BackgroundRenderer:
-    """Handle rendering network visualizations in the background.""" 
-    def __init__(self, simulator):
-        self.simulator = simulator
-        self.visualization_queue = queue.Queue()
-        self.ready_figures = {}
-        self.running = False
-        self.thread = None
-        self.last_render_time = time.time()
-        self.lock = threading.Lock()
-        self.rendering_in_progress = False
-        self.tendril_visibility = True
-        self.tendril_duration = 30  # Longer duration for better visibility
-        self.last_error = None
-        self.error_count = 0
     
     def start(self):
         """Start the background rendering thread.""" 
