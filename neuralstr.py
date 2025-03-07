@@ -25,6 +25,45 @@ except ImportError:
 # Initialize Streamlit config ONCE at the very top
 st.set_page_config(page_title="Neural Network Simulation", layout="wide")
 
+# Initialize all required session state variables first
+if 'initialized' not in st.session_state:
+    # Basic simulation controls
+    st.session_state.simulation_running = False
+    st.session_state.simulator = NetworkSimulator()
+    st.session_state.update_interval = 0.3
+    st.session_state.last_update = time.time()
+    st.session_state.frame_count = 0
+    st.session_state.speed = 1.0
+    
+    # Visualization settings
+    st.session_state.viz_mode = '3d'
+    st.session_state.display_update_interval = 0.5
+    st.session_state.animation_enabled = True
+    st.session_state.show_tendrils = True
+    st.session_state.tendril_duration = 30
+    st.session_state.refresh_rate = 5
+    st.session_state.use_dark_mode = False
+    
+    # Node generation settings
+    st.session_state.auto_node_generation = True
+    st.session_state.node_generation_rate = 0.05
+    st.session_state.max_nodes = 200
+    
+    # Rendering settings
+    st.session_state.buffered_rendering = True
+    st.session_state.render_interval = 0.5
+    st.session_state.render_frequency = 5
+    st.session_state.last_render_time = time.time()
+    st.session_state.force_refresh = False
+    st.session_state.viz_error_count = 0
+    
+    # Mark as initialized
+    st.session_state.initialized = True
+    
+    # Add initial nodes
+    for _ in range(3):
+        st.session_state.simulator.network.add_node(visible=True)
+
 # Define NODE_TYPES first since it's used by the Node class
 NODE_TYPES = {
     'explorer': {
