@@ -19,6 +19,7 @@ from collections import deque
 from scipy.spatial import cKDTree
 from datetime import datetime
 import plotly.graph_objs as go
+import cupy as cp  # For GPU acceleration
 
 NODE_TYPES = {
     'explorer': {
@@ -135,6 +136,25 @@ NODE_TYPES = {
     }
 }
 
+# Add neuromodulator types
+NEUROMODULATORS = {
+    'dopamine': {
+        'decay_rate': 0.1,
+        'learning_boost': 1.5,
+        'spread_radius': 3.0
+    },
+    'serotonin': {
+        'decay_rate': 0.05,
+        'stability_factor': 1.2,
+        'spread_radius': 4.0
+    },
+    'noradrenaline': {
+        'decay_rate': 0.15,
+        'plasticity_boost': 1.3,
+        'spread_radius': 2.5
+    }
+}
+
 class Node:
     def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
         if not node_type:
@@ -187,6 +207,19 @@ class Node:
             'adaptation_rate': random.uniform(0.01, 0.1),
             'plasticity': random.uniform(0.5, 1.5)
         }
+        
+        # Add neuromodulator state
+        self.neuromodulators = {
+            'dopamine': 0.0,
+            'serotonin': 0.0,
+            'noradrenaline': 0.0
+        }
+        
+        # Add backpropagation fields
+        self.gradient = 0.0
+        self.layer_type = None  # 'input', 'hidden', or 'output'
+        self.weights_gradient = {}
+        self.activation_history = deque(maxlen=100)
 
     def fire(self, network):
         """Attempt to fire and connect to other nodes with behavior based on node type."""
@@ -325,6 +358,39 @@ class Node:
             elif self.type == 'catalyst':
                 signal['strength'] *= 1.05
 
+    def backpropagate(self, target_value=None, upstream_gradient=None):
+        """Implement backpropagation for learning."""
+        if self.layer_type == 'output' and target_value is not None:
+            # For output nodes, compute initial gradient
+            error = self.activation_level - target_value
+            self.gradient = error * self._activation_derivative()
+        elif upstream_gradient is not None:
+            # For hidden nodes, use upstream gradient
+            self.gradient = upstream_gradient * self._activation_derivative()
+            
+        # Update weights using gradient
+        learning_rate = self.genes['learning_rate'] * (1 + self.neuromodulators['dopamine'])
+        for conn_id, strength in self.connections.items():
+            weight_update = -learning_rate * self.gradient * strength
+            self.weights_gradient[conn_id] = weight_update
+            
+    def _activation_derivative(self):
+        """Compute derivative of activation function."""
+        x = self.activation_level
+        return x * (1 - x)  # Derivative of sigmoid
+
+    def update_neuromodulators(self, network):
+        """Update neuromodulator levels."""
+        for modulator, level in self.neuromodulators.items():
+            # Natural decay
+            decay = NEUROMODULATORS[modulator]['decay_rate']
+            self.neuromodulators[modulator] *= (1 - decay)
+            
+            # Receive modulator signals from neighbors
+            nearby = network._get_nodes_in_radius(self, NEUROMODULATORS[modulator]['spread_radius'])
+            for neighbor in nearby:
+                self.neuromodulators[modulator] += neighbor.neuromodulators[modulator] * 0.1
+
 class NeuralNetwork:
     def __init__(self, max_nodes=200):
         self.nodes = []
@@ -349,6 +415,21 @@ class NeuralNetwork:
         self.last_save_time = time.time()
         self.start_time = time.time()
         self.shock_countdown = 50
+        
+        # Add layer structure
+        self.input_layer = []
+        self.hidden_layers = []
+        self.output_layer = []
+        
+        # Add pattern recognition
+        self.pattern_detector = PatternDetector()
+        
+        # Initialize GPU memory if available
+        try:
+            self.use_gpu = True
+            self.device = cp.cuda.Device(0)
+        except:
+            self.use_gpu = False
 
     def add_node(self, visible=True, node_type=None, max_connections=15):
         node = Node(len(self.nodes), node_type=node_type, visible=visible, max_connections=max_connections)
@@ -1142,6 +1223,91 @@ class NeuralNetwork:
         
         return network
 
+    def create_structured_layers(self, input_size, hidden_sizes, output_size):
+        """Create structured network layers."""
+        # Create input layer
+        self.input_layer = [self.add_node(node_type='memory', visible=True) for _ in range(input_size)]
+        for node in self.input_layer:
+            node.layer_type = 'input'
+            
+        # Create hidden layers
+        prev_layer = self.input_layer
+        for size in hidden_sizes:
+            layer = [self.add_node(node_type='connector', visible=True) for _ in range(size)]
+            for node in layer:
+                node.layer_type = 'hidden'
+                # Connect to previous layer
+                for prev_node in prev_layer:
+                    self.connect_nodes(prev_node, node)
+            self.hidden_layers.append(layer)
+            prev_layer = layer
+            
+        # Create output layer
+        self.output_layer = [self.add_node(node_type='memory', visible=True) for _ in range(output_size)]
+        for node in self.output_layer:
+            node.layer_type = 'output'
+            # Connect to last hidden layer
+            for prev_node in prev_layer:
+                self.connect_nodes(prev_node, node)
+                
+    def forward_pass(self, inputs):
+        """Perform forward pass through structured layers."""
+        # Set input values
+        for node, value in zip(self.input_layer, inputs):
+            node.activation_level = value
+            node.activated = True
+            
+        # Process hidden layers
+        for layer in self.hidden_layers:
+            for node in layer:
+                node.process_signals(self)
+                
+        # Get output values
+        return [node.activation_level for node in self.output_layer]
+        
+    def backward_pass(self, targets):
+        """Perform backward pass for learning."""
+        # Compute output layer gradients
+        for node, target in zip(self.output_layer, targets):
+            node.backpropagate(target_value=target)
+            
+        # Backpropagate through hidden layers
+        for layer in reversed(self.hidden_layers):
+            for node in layer:
+                upstream_gradient = sum(out_node.gradient * strength 
+                                     for out_node in node.connections
+                                     for strength in node.connections.values())
+                node.backpropagate(upstream_gradient=upstream_gradient)
+
+class PatternDetector:
+    """Enhanced pattern recognition system."""
+    def __init__(self):
+        self.patterns = {}
+        self.sequence_memory = deque(maxlen=1000)
+        self.min_pattern_length = 3
+        self.max_pattern_length = 20
+        
+    def analyze_sequence(self, state):
+        """Analyze network state for patterns."""
+        self.sequence_memory.append(state)
+        
+        # Use GPU for pattern matching if available
+        if cp is not None:
+            return self._gpu_pattern_search()
+        return self._cpu_pattern_search()
+        
+    def _gpu_pattern_search(self):
+        # Convert sequence to GPU array
+        seq_array = cp.array(list(self.sequence_memory))
+        patterns = {}
+        
+        # Search for patterns of different lengths
+        for length in range(self.min_pattern_length, self.max_pattern_length):
+            # Use GPU to compute similarity matrix
+            patterns.update(self._find_patterns_gpu(seq_array, length))
+            
+        return patterns
+
 class NetworkSimulator:
     def __init__(self, network=None, max_nodes=200):
         self.network = network or NeuralNetwork(max_nodes=max_nodes)
@@ -1264,19 +1430,6 @@ def parse_contents(contents, filename):
 # Streamlit UI code
 def create_ui():
     """Create the main Streamlit UI."""
-    # Initialize session state
-    if 'simulation_running' not in st.session_state:
-        st.session_state.simulation_running = False
-    if 'simulator' not in st.session_state:
-        st.session_state.simulator = NetworkSimulator()
-        st.session_state.simulator.network.add_node(visible=True)
-    if 'update_interval' not in st.session_state:
-        st.session_state.update_interval = 0.3
-    if 'last_update' not in st.session_state:
-        st.session_state.last_update = time.time()
-    if 'frame_count' not in st.session_state:
-        st.session_state.frame_count = 0
-
     # Create display containers
     viz_container = st.empty()
     stats_container = st.empty()
@@ -1288,17 +1441,15 @@ def create_ui():
         
         with col1:
             if st.button("▶️ Start", key="start_sim"):
-                if not st.session_state.simulation_running:
-                    st.session_state.simulation_running = True
-                    st.session_state.simulator.start(
-                        steps_per_second=st.session_state.get('speed', 1.0)
-                    )
+                st.session_state.simulation_running = True
+                st.session_state.simulator.start(
+                    steps_per_second=st.session_state.speed
+                )
         
         with col2:
             if st.button("⏸️ Pause", key="stop_sim"):
-                if st.session_state.simulation_running:
-                    st.session_state.simulation_running = False
-                    st.session_state.simulator.stop()
+                st.session_state.simulation_running = False
+                st.session_state.simulator.stop()
         
         if st.button("🔄 Reset", key="reset_sim"):
             st.session_state.simulator.stop()
@@ -1353,19 +1504,16 @@ st.title("Neural Network Growth Simulation")
 refresh_placeholder = st.empty()
 viz_mode = st.sidebar.radio("Visualization Mode", options=["3d", "2d"], index=0)
 
-# Create and run the UI
+# Initialize network if needed
+_initialize_network()
+
+# Create UI components
 viz_container, stats_container = create_ui()
 
-# Main update loop
+# Main simulation and visualization loop
 if st.session_state.animation_enabled and st.session_state.simulation_running:
-    current_time = time.time()
-    elapsed = current_time - st.session_state.last_update
-    
-    if elapsed > st.session_state.update_interval:
-        update_display()
-        st.session_state.last_update = current_time
-        st.session_state.frame_count += 1
-    
+    _handle_simulation_commands()
+    _update_visualization()
     time.sleep(0.05)
     st.rerun()
 else:
@@ -1373,7 +1521,7 @@ else:
         if st.button("🔄 Refresh View"):
             update_display()
 
-# Create requirements.txt if needed
+# Create requirements file if needed
 if not os.path.exists("requirements.txt"):
     create_requirements_file()
 
