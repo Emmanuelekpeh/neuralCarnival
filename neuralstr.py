@@ -623,7 +623,7 @@ class NeuralNetwork:
             y=np.linspace(y_range[0], y_range[1], grid_size),
             colorscale='Viridis',
             showscale=True,
-            opacity=0.8
+            opacity=0.9  # Increased from 0.8
         ))
         fig.update_layout(
             title="Neural Activity Heatmap",
@@ -631,7 +631,7 @@ class NeuralNetwork:
             yaxis_title="Y Position",
             width=600,
             height=600,
-            template="plotly_dark"
+            template="plotly_white"  # Changed from plotly_dark to plotly_white
         )
         return fig
 
@@ -739,7 +739,7 @@ class NeuralNetwork:
         fig = go.Figure()
         pos = self.calculate_3d_layout()
 
-        # Create traces for edges
+        # Create traces for edges with higher brightness
         edge_traces = []
         for edge in self.graph.edges(data=True):
             u, v, data = edge
@@ -751,7 +751,7 @@ class NeuralNetwork:
                     y=[y0, y1, None],
                     z=[z0, z1, None],
                     mode='lines',
-                    line=dict(color='rgba(100,100,100,0.3)', width=1),
+                    line=dict(color='rgba(150,150,150,0.5)', width=1.5),  # Brighter and thicker
                     hoverinfo='none'
                 ))
 
@@ -812,7 +812,7 @@ class NeuralNetwork:
                             showlegend=False
                         ))
 
-        # Create traces for nodes (rest of the code is unchanged)
+        # Create traces for nodes with higher opacity
         nodes_by_type = {}
         for node in self.nodes:
             if node.visible and node.id in pos:
@@ -846,7 +846,8 @@ class NeuralNetwork:
                 marker=dict(
                     size=data['sizes'],
                     color=NODE_TYPES[node_type]['color'],
-                    opacity=0.8
+                    opacity=1.0,  # Full opacity for better visibility
+                    line=dict(width=1, color='rgba(255,255,255,0.8)')  # Add border for better contrast
                 ),
                 text=data['text'],
                 hoverinfo='text',
@@ -855,10 +856,13 @@ class NeuralNetwork:
 
         fig.update_layout(
             showlegend=True,
+            template="plotly_white",  # Use light theme
+            paper_bgcolor='rgba(255,255,255,0.9)',  # Light background
+            plot_bgcolor='rgba(255,255,255,0.9)', 
             scene=dict(
-                xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                zaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+                xaxis=dict(showticklabels=False, showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='lightgray'),
+                yaxis=dict(showticklabels=False, showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='lightgray'),
+                zaxis=dict(showticklabels=False, showgrid=True, gridcolor='lightgray', zeroline=True, zerolinecolor='lightgray'),
             ),
             margin=dict(l=0, r=0, t=0, b=0)
         )
@@ -1326,7 +1330,7 @@ def create_ui():
             "Display Mode", 
             options=['3d', '2d'], 
             index=0 if st.session_state.viz_mode == '3d' else 1,
-            help="Choose between 3D and 2D visualization"
+            help="Choose between 3D and 2D visualization modes"
         )
         st.session_state.viz_mode = viz_mode
         
@@ -1409,6 +1413,15 @@ def create_ui():
             value=st.session_state.get('tendril_persistence', 20),
             help="How many simulation steps tendrils remain visible"
         )
+        
+        # Add theme settings
+        st.markdown("## Theme Settings")
+        st.markdown("---")
+        
+        # Add a dark mode switch
+        use_dark_mode = st.checkbox("Use Dark Mode", value=False, 
+                                  help="Toggle between light and dark theme for visualizations")
+        st.session_state.use_dark_mode = use_dark_mode
     
     return viz_container, stats_container
 
@@ -1450,7 +1463,8 @@ def _initialize_session_state():
         'show_tendrils': True,
         'tendril_persistence': 20,
         'refresh_rate': 5,  # Only refresh visualizations every 5 frames
-        'cached_frame': -1  # Track the last frame when visuals were refreshed
+        'cached_frame': -1,  # Track the last frame when visuals were refreshed
+        'use_dark_mode': False  # Default to light mode
     }
     
     for key, value in initial_states.items():
@@ -1506,12 +1520,28 @@ def update_display():
         # Cache current frame number
         st.session_state.cached_frame = st.session_state.frame_count
         
+        # Apply dark/light theme preference to visualizations
+        dark_mode = st.session_state.get('use_dark_mode', False)
+        template = "plotly_dark" if dark_mode else "plotly_white"
+        
         # Generate all visualizations once and store in session state
         st.session_state.network_fig = st.session_state.simulator.network.visualize(mode=st.session_state.viz_mode)
         st.session_state.activity_fig = st.session_state.simulator.network.get_activity_heatmap()
+        
+        # Update figure templates based on dark mode setting
+        st.session_state.network_fig.update_layout(template=template)
+        st.session_state.activity_fig.update_layout(template=template)
+        
         st.session_state.stats_fig = st.session_state.simulator.network.get_stats_figure()
+        if st.session_state.stats_fig:
+            st.session_state.stats_fig.update_layout(template=template)
+            
         st.session_state.pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
+        st.session_state.pattern_fig.update_layout(template=template)
+        
         st.session_state.strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
+        st.session_state.strength_fig.update_layout(template=template)
+        
         st.session_state.network_summary = st.session_state.simulator.network.get_network_summary()
     
     # Create tabs
