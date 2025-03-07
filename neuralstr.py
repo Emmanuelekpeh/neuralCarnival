@@ -5,6 +5,7 @@ import time
 import threading
 import queue
 import streamlit as st
+import math
 
 # Import dependencies with error handling
 try:
@@ -118,6 +119,30 @@ NODE_TYPES = {
         'decay_rate': (0.02, 0.04),
         'connection_strength': 1.0,
         'resurrection_chance': 0.4,
+    },
+    'equalizer': {
+        'color': '#ABABAB',  # Gray
+        'size_range': (60, 140),
+        'firing_rate': (0.05, 0.1),
+        'decay_rate': (0.02, 0.06),
+        'connection_strength': 1.0,
+        'resurrection_chance': 0.1
+    },
+    'reward': {
+        'color': '#FFD700',  # Gold
+        'size_range': (70, 160),
+        'firing_rate': (0.1, 0.2),
+        'decay_rate': (0.01, 0.03),
+        'connection_strength': 1.7,
+        'resurrection_chance': 0.25
+    },
+    'buffer': {
+        'color': '#9370DB',  # Medium Purple
+        'size_range': (50, 120),
+        'firing_rate': (0.05, 0.15),
+        'decay_rate': (0.02, 0.04),
+        'connection_strength': 1.2,
+        'resurrection_chance': 0.2
     }
 }
 
@@ -157,6 +182,15 @@ class Node:
         self.activation_level = 0.0  # Current activation level (0.0-1.0)
         self.activated = False  # Whether node is currently activated
         
+        # Add new properties for enhanced features
+        self.energy = 100.0  # Energy for firing
+        self.stored_signals = []  # For buffer/memory nodes
+        self.burst_mode = False  # For short bursts
+        self.burst_counter = 0
+        self.base_decay_rate = random.uniform(*self.properties['decay_rate'])
+        self.adaptive_decay = self.base_decay_rate
+        self.channel = random.randint(1, 5)  # Communication channel (1-5)
+        
     def fire(self, network):
         """Attempt to connect to other nodes with behavior based on node type."""
         if not hasattr(self, 'cycle_counter'):
@@ -164,20 +198,46 @@ class Node:
         if not hasattr(self, 'last_targets'):
             self.last_targets = set()
             
+        # Time-varying firing rate for all nodes
+        if hasattr(self, 'properties') and 'firing_rate' in self.properties:
+            base_rate = sum(self.properties['firing_rate']) / 2
+            cycle_factor = math.sin(time.time() / 60.0) * 0.1  # 60-second cycle
+            self.firing_rate = base_rate + cycle_factor
+        
+        # Check for burst mode
+        if self.type == 'catalyst' and random.random() < 0.03:
+            self.burst_mode = True
+            self.burst_counter = 10  # Burst lasts for 10 steps
+        
+        # Apply burst mode effects
+        if self.burst_mode and self.burst_counter > 0:
+            self.firing_rate *= 2.0
+            self.burst_counter -= 1
+            if self.burst_counter <= 0:
+                self.burst_mode = False
+            
         if self.type == 'oscillator':
             self.cycle_counter += 1
             wave_position = np.sin(self.cycle_counter / 10) * 0.5 + 0.5
             min_rate, max_rate = self.properties['firing_rate']
             self.firing_rate = min_rate + wave_position * (max_rate - min_rate)
         
+        # Check energy levels
+        if self.energy < 10:
+            return  # Not enough energy to fire
+            
         if random.random() > self.firing_rate:
             return
             
         self.last_fired = 0
         
+        # Reduce energy when firing
+        self.energy -= 5 + random.random() * 5
+        
         if not network.nodes:
             return
         
+        # Node type specific behavior
         if self.type == 'explorer':
             target = random.choice(network.nodes)
         elif self.type == 'connector':
@@ -281,8 +341,45 @@ class Node:
                     target = random.choice(visible_nodes)
                 else:
                     target = random.choice(network.nodes)
+        elif self.type == 'equalizer':
+            # Find nodes with overly strong connections
+            strong_nodes = [n for n in network.nodes if n.visible and 
+                           any(strength > 2.0 for strength in n.connections.values())]
+            if strong_nodes and random.random() < 0.7:
+                target = random.choice(strong_nodes)
+            else:
+                target = random.choice(network.nodes)
+        elif self.type == 'reward':
+            # Find nodes with many connections and reward them
+            active_nodes = [n for n in network.nodes if n.visible and len(n.connections) > 3]
+            if active_nodes and random.random() < 0.8:
+                target = random.choice(active_nodes)
+            else:
+                target = random.choice(network.nodes)
+        elif self.type == 'buffer':
+            # Store recent connections and replay them
+            if self.stored_signals and random.random() < 0.7:
+                target_id = self.stored_signals.pop(0)
+                target = next((n for n in network.nodes if n.id == target_id), None)
+                if not target:
+                    target = random.choice(network.nodes)
+            else:
+                target = random.choice(network.nodes)
+                if len(self.stored_signals) < 5 and target.id != self.id:
+                    self.stored_signals.append(target.id)
         else:
             target = random.choice(network.nodes)
+        
+        # Neighbor-aware connection logic
+        if random.random() < 0.3:  # 30% chance of using neighbor awareness
+            nearby_nodes = self._get_nearby_nodes(network)
+            if nearby_nodes:
+                if len(nearby_nodes) > 5 and random.random() < 0.7:
+                    # Too crowded, look for less connected regions
+                    target = min(nearby_nodes, key=lambda n: len(n.connections))
+                else:
+                    # Not too crowded, connect within neighborhood
+                    target = random.choice(nearby_nodes)
         
         # Set activation and create signals when firing
         self.activated = True
@@ -290,18 +387,32 @@ class Node:
             
         # When connecting, create a signal for visualization
         if target and target.id != self.id:
-            self.connect(target)
-            self.connection_attempts += 1
-            
-            # Create signal from this node to target
-            signal_strength = self.properties['connection_strength']
-            self.signals.append({
-                'target_id': target.id,
-                'strength': signal_strength,
-                'progress': 0.0,  # 0.0 to 1.0 progress along path
-                'duration': 20,   # How many steps signal lasts
-                'remaining': 20    # Counter for remaining steps
-            })
+            # Channel-based connection logic
+            if hasattr(target, 'channel') and (self.channel == target.channel or random.random() < 0.4):
+                self.connect(target)
+                self.connection_attempts += 1
+                
+                # Create signal from this node to target
+                signal_strength = self.properties['connection_strength']
+                self.signals.append({
+                    'target_id': target.id,
+                    'strength': signal_strength,
+                    'progress': 0.0,  # 0.0 to 1.0 progress along path
+                    'duration': 20,   # How many steps signal lasts
+                    'remaining': 20,   # Counter for remaining steps
+                    'channel': self.channel  # Add communication channel
+                })
+                
+    def _get_nearby_nodes(self, network):
+        """Get nodes that are spatially close to this one."""
+        nearby = []
+        for node in network.nodes:
+            if node.id != self.id and node.visible:
+                # Calculate Euclidean distance
+                distance = sum((a - b) ** 2 for a, b in zip(self.position, node.position)) ** 0.5
+                if distance < 5.0:  # Within range
+                    nearby.append(node)
+        return nearby
 
     def process_signals(self, network):
         """Process and update signals originating from this node."""
@@ -389,6 +500,18 @@ class Node:
 
     def weaken_connections(self):
         """Reduce strength of connections over time, with type-specific decay rates."""
+        # Adaptive decay based on number of connections
+        conn_count = len(self.connections)
+        if conn_count > 10:
+            # More connections mean faster decay
+            self.adaptive_decay = self.base_decay_rate * (1.0 + 0.1 * (conn_count - 10) / 5)
+        elif conn_count < 3:
+            # Few connections mean slower decay
+            self.adaptive_decay = max(self.base_decay_rate * 0.7, 0.01)
+        else:
+            # Reset to base rate
+            self.adaptive_decay = self.base_decay_rate
+        
         min_decay, max_decay = self.properties['decay_rate']
         
         if self.type == 'sentinel':
@@ -398,10 +521,12 @@ class Node:
         if self.type == 'oscillator':
             cycle_position = np.sin(self.cycle_counter / 15) * 0.5 + 0.5
             if cycle_position > 0.7:
+                # Limit oscillator strengthening to prevent takeover
                 for node_id in list(self.connections.keys()):
-                    self.connections[node_id] *= 1.05
+                    if random.random() < 0.3:  # Only strengthen some connections
+                        self.connections[node_id] *= 1.03  # Reduced from 1.05
                 self.memory = max(self.memory, self.size)
-                self.size = max(10, min(self.properties['size_range'][1] * 1.5, self.size))
+                self.size = max(10, min(self.properties['size_range'][1] * 1.3, self.size))  # Reduced max multiplier
                 self.age += 1
                 self.last_fired += 1
                 return
@@ -409,9 +534,14 @@ class Node:
         if self.type == 'pruner':
             min_decay *= 1.2
             max_decay *= 1.2
+            
+        if self.type == 'equalizer':
+            for node_id in list(self.connections.keys()):
+                if self.connections[node_id] > 2.0:
+                    self.connections[node_id] *= 0.95  # Reduce strong connections
         
         for node_id in list(self.connections.keys()):
-            decay_amount = random.uniform(min_decay, max_decay)
+            decay_amount = random.uniform(min_decay, max_decay) * self.adaptive_decay
             self.connections[node_id] -= decay_amount
             
             if self.type == 'attractor' and self.connections[node_id] <= 0:
@@ -448,6 +578,9 @@ class Node:
             
         self.last_fired += 1
         self.age += 1
+        
+        # Recover energy over time
+        self.energy = min(100.0, self.energy + 1.5)
 
     def attempt_resurrection(self):
         """Try to resurrect invisible nodes based on type-specific rules."""
@@ -497,12 +630,16 @@ class NeuralNetwork:
         self.start_time = time.time()
         self.learning_rate = 0.1
         self.max_nodes = max_nodes
+        self.energy_pool = 1000.0  # Shared energy pool
+        self.shock_countdown = random.randint(20, 100)  # Steps until next shock event
         self.stats = {
             'node_count': [],
             'visible_nodes': [],
             'connection_count': [],
             'avg_size': [],
-            'type_distribution': {t: [] for t in NODE_TYPES}
+            'type_distribution': {t: [] for t in NODE_TYPES},
+            'energy_pool': [],  # Track energy pool
+            'avg_energy': []    # Track average node energy
         }
     
     def add_node(self, visible=True, node_type=None, max_connections=15):
@@ -523,6 +660,15 @@ class NeuralNetwork:
     def step(self):
         """Simulate one step of network activity."""
         self.simulation_steps += 1
+
+        # Distribute energy from the pool to nodes
+        self._distribute_energy()
+        
+        # Handle shock events
+        self.shock_countdown -= 1
+        if self.shock_countdown <= 0:
+            self._trigger_shock_event()
+            self.shock_countdown = random.randint(50, 150)  # Reset countdown
 
         node_count = len(self.nodes)
         if node_count < self.max_nodes and random.random() < 0.15 * (1 - node_count / self.max_nodes):
@@ -569,6 +715,62 @@ class NeuralNetwork:
             node.connections[common_id] += self.learning_rate
             target_node.connections[common_id] += self.learning_rate
 
+    def _distribute_energy(self):
+        """Distribute energy from the pool to nodes."""
+        if not self.nodes:
+            return
+            
+        # Replenish pool
+        self.energy_pool = min(1000.0, self.energy_pool + 5.0)
+        
+        # Calculate total energy needed
+        active_nodes = [n for n in self.nodes if n.visible]
+        if not active_nodes:
+            return
+            
+        avg_energy = sum(n.energy for n in active_nodes) / len(active_nodes)
+        if avg_energy > 40:  # If average energy is high enough, skip distribution
+            return
+            
+        # Distribute energy to nodes with low energy
+        energy_per_node = min(10.0, self.energy_pool / len(active_nodes))
+        for node in active_nodes:
+            if node.energy < 30:  # Only give energy to nodes that need it
+                transfer = energy_per_node * (1 - node.energy/100)
+                node.energy = min(100.0, node.energy + transfer)
+                self.energy_pool -= transfer
+
+    def _trigger_shock_event(self):
+        """Trigger a system-wide shock event that activates random nodes."""
+        active_nodes = [n for n in self.nodes if n.visible]
+        if not active_nodes:
+            return
+            
+        # Activate a random subset of nodes (10-30%)
+        shock_count = max(1, int(len(active_nodes) * random.uniform(0.1, 0.3)))
+        shocked_nodes = random.sample(active_nodes, shock_count)
+        
+        for node in shocked_nodes:
+            node.activated = True
+            node.activation_level = 1.0
+            node.energy = min(100.0, node.energy + 20)  # Energy boost
+            
+            # Create random connections from shocked nodes
+            for _ in range(3):
+                if random.random() < 0.7:
+                    target = random.choice(active_nodes)
+                    if target.id != node.id:
+                        node.connect(target)
+                        # Create signal
+                        node.signals.append({
+                            'target_id': target.id,
+                            'strength': 2.0,  # Strong shock signal
+                            'progress': 0.0,
+                            'duration': 15,
+                            'remaining': 15,
+                            'channel': node.channel
+                        })
+
     def update_graph(self):
         """Update the visualization graph."""
         self.graph.clear_edges()
@@ -585,8 +787,10 @@ class NeuralNetwork:
 
         if visible_count > 0:
             avg_size = sum(n.size for n in visible) / visible_count
+            avg_energy = sum(n.energy for n in visible) / visible_count
         else:
             avg_size = 0
+            avg_energy = 0
 
         connection_count = sum(len(n.connections) for n in self.nodes)
 
@@ -594,13 +798,15 @@ class NeuralNetwork:
         self.stats['visible_nodes'].append(visible_count)
         self.stats['connection_count'].append(connection_count)
         self.stats['avg_size'].append(avg_size)
+        self.stats['energy_pool'].append(self.energy_pool)
+        self.stats['avg_energy'].append(avg_energy)
 
         type_counts = {t: 0 for t in NODE_TYPES}
         for node in visible:
             type_counts[node.type] += 1
 
         for node_type in NODE_TYPES:
-            self.stats['type_distribution'][node_type].append(type_counts[node_type])
+            self.stats['type_distribution'][node_type].append(type_counts.get(node_type, 0))
 
     def calculate_3d_layout(self):
         """Calculate 3D positions for visualization."""
