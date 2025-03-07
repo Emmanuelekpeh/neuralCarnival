@@ -580,46 +580,84 @@ class NeuralNetwork:
             return self._visualize_2d()
 
     def _visualize_3d(self):
-        """Create 3D visualization of the network."""
+        """Create 3D visualization of the network with enhanced aesthetics."""
         fig = go.Figure()
 
         pos = self.calculate_3d_layout()
 
+        # Draw edges with improved visual effects
+        edge_traces = []
+        
         for edge in self.graph.edges(data=True):
             u, v, data = edge
             if u in pos and v in pos:
                 x0, y0, z0 = pos[u]
                 x1, y1, z1 = pos[v]
                 weight = data['weight']
-
-                color = f'rgba({min(255, int(weight * 40))}, 100, {255 - min(255, int(weight * 40))}, {min(1.0, weight/5)})'
-
-                fig.add_trace(go.Scatter3d(
-                    x=[x0, x1],
-                    y=[y0, y1],
-                    z=[z0, z1],
+                
+                # Create curved connection lines for better aesthetics
+                pts = np.linspace(0, 1, 12)
+                arc_height = min(0.5, weight * 0.1)
+                
+                x_vals = []
+                y_vals = []
+                z_vals = []
+                
+                for p in pts:
+                    x_vals.append(x0 * (1-p) + x1 * p)
+                    y_vals.append(y0 * (1-p) + y1 * p)
+                    # Add curve to z-axis
+                    z_arc = arc_height * np.sin(p * np.pi)
+                    z_vals.append(z0 * (1-p) + z1 * p + z_arc)
+                
+                # Color based on connection weight
+                color = f'rgba({min(255, int(weight * 50))}, {100 + min(155, int(weight * 20))}, {255 - min(255, int(weight * 30))}, {min(0.9, 0.2 + weight/5)})'
+                
+                edge_traces.append(go.Scatter3d(
+                    x=x_vals,
+                    y=y_vals,
+                    z=z_vals,
                     mode='lines',
                     line=dict(
-                        width=min(10, weight/2),
+                        width=min(8, weight),
                         color=color
                     ),
-                    hoverinfo='none'
+                    hoverinfo='none',
+                    showlegend=False
                 ))
 
+        # Add all edge traces
+        for trace in edge_traces:
+            fig.add_trace(trace)
+
+        # Add nodes with improved styling
         nodes_by_type = {}
         for node in self.nodes:
             if node.visible:
                 if node.type not in nodes_by_type:
                     nodes_by_type[node.type] = {
                         'x': [], 'y': [], 'z': [],
-                        'sizes': [], 'text': []
+                        'sizes': [], 'text': [], 'colors': []
                     }
 
                 x, y, z = pos[node.id]
                 nodes_by_type[node.type]['x'].append(x)
                 nodes_by_type[node.type]['y'].append(y)
                 nodes_by_type[node.type]['z'].append(z)
-                nodes_by_type[node.type]['sizes'].append(node.size/3)
+                
+                # Scale node size better
+                node_size = node.size/2.5
+                nodes_by_type[node.type]['sizes'].append(node_size)
+                
+                # Customize node color based on connections and activity
+                base_color = NODE_TYPES[node.type]['color']
+                conn_count = len(node.connections)
+                activity = 1.0 - (node.last_fired / 20.0) if node.last_fired < 20 else 0
+                
+                if activity > 0.7:  # Recently active nodes glow
+                    nodes_by_type[node.type]['colors'].append(f"rgba({min(255, int(conn_count * 15))}, 200, 255, 0.95)")
+                else:
+                    nodes_by_type[node.type]['colors'].append(base_color)
 
                 hover_text = (f"Node {node.id} ({node.type})<br>"
                               f"Size: {node.size:.1f}<br>"
@@ -635,32 +673,40 @@ class NeuralNetwork:
                 mode='markers',
                 marker=dict(
                     size=data['sizes'],
-                    color=NODE_TYPES[node_type]['color'],
-                    opacity=0.8,
-                    line=dict(width=1, color='rgb(40,40,40)')
+                    color=data['colors'],
+                    opacity=0.9,
+                    line=dict(width=1, color='rgb(40,40,40)'),
+                    symbol='circle',
                 ),
                 text=data['text'],
                 hoverinfo='text',
                 name=node_type
             ))
 
+        # Improved camera and layout settings for better visualization
         fig.update_layout(
             scene=dict(
-                xaxis=dict(showticklabels=False, title=''),
-                yaxis=dict(showticklabels=False, title=''),
-                zaxis=dict(showticklabels=False, title=''),
-                bgcolor='rgba(240,240,240,0.5)'
+                xaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
+                yaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
+                zaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
+                bgcolor='rgba(240,248,255,0.8)',
+                aspectmode='cube',  # Equal aspect ratio
             ),
             margin=dict(l=0, r=0, b=0, t=30),
-            scene_camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)),
-            title="Neural Network Growth - 3D View",
+            scene_camera=dict(
+                eye=dict(x=1.5, y=1.5, z=1.2),
+                up=dict(x=0, y=0, z=1)
+            ),
+            title="Neural Network Visualization - 3D View",
             showlegend=True,
             legend=dict(
                 yanchor="top",
                 y=0.99,
                 xanchor="left",
-                x=0.01
-            )
+                x=0.01,
+                bgcolor="rgba(255,255,255,0.8)"
+            ),
+            template="plotly_white"
         )
 
         return fig
@@ -811,10 +857,13 @@ class NeuralNetwork:
 
     def save_state(self, filename=None):
         """Save the current network state to a file."""
+        directory = "network_saves"
+        if not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+            
         if filename is None:
-            os.makedirs("network_saves", exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"network_saves/network_state_{timestamp}.pkl"
+            filename = f"{directory}/network_state_{timestamp}.pkl"
 
         state = {
             'nodes': self.nodes,
@@ -828,9 +877,9 @@ class NeuralNetwork:
         with open(filename, 'wb') as f:
             pickle.dump(state, f)
 
-        print(f"Network saved to {filename}")
+        st.success(f"Network saved to {filename}")
 
-        stats_file = f"network_saves/stats_{timestamp}.csv"
+        stats_file = f"{directory}/stats_{timestamp}.csv"
         with open(stats_file, 'w') as f:
             f.write("Step,NodeCount,VisibleNodes,ConnectionCount,AvgSize")
             for node_type in NODE_TYPES:
@@ -1001,67 +1050,158 @@ def parse_contents(contents, filename):
     return None
 
 # Streamlit app
+st.set_page_config(page_title="Neural Network Simulation", layout="wide")
 st.title("Neural Network Growth Simulation")
 
-# Initialize simulator with a single visible node
-simulator = NetworkSimulator()
-simulator.network.add_node(visible=True)
+# Use session state to track the simulation state
+if 'simulation_running' not in st.session_state:
+    st.session_state.simulation_running = False
+if 'simulator' not in st.session_state:
+    st.session_state.simulator = NetworkSimulator()
+    st.session_state.simulator.network.add_node(visible=True)
+if 'update_interval' not in st.session_state:
+    st.session_state.update_interval = 0.3  # Update interval in seconds
+if 'last_update' not in st.session_state:
+    st.session_state.last_update = time.time()
+if 'frame_count' not in st.session_state:
+    st.session_state.frame_count = 0
 
-# Global variable to track if simulation is running
-simulation_running = False
+# Create containers for our visualization
+viz_container = st.empty()
+stats_container = st.empty()
+summary_container = st.empty()
 
-# Sidebar controls
+# Sidebar controls with improved UI
 st.sidebar.header("Simulation Controls")
-if st.sidebar.button("Start"):
-    if not simulation_running:
-        simulator.start(steps_per_second=1.0)
-        simulation_running = True
-        st.sidebar.success("Simulation started")
-if st.sidebar.button("Pause"):
-    if simulation_running:
-        simulator.stop()
-        simulation_running = False
+col1, col2 = st.sidebar.columns(2)
+
+with col1:
+    start_button = st.button("▶️ Start", key="start_sim")
+with col2:
+    stop_button = st.button("⏸️ Pause", key="stop_sim")
+
+if start_button:
+    if not st.session_state.simulation_running:
+        st.session_state.simulator.start(steps_per_second=st.session_state.get('speed', 1.0))
+        st.session_state.simulation_running = True
+        st.sidebar.success("Simulation running!")
+
+if stop_button:
+    if st.session_state.simulation_running:
+        st.session_state.simulator.stop()
+        st.session_state.simulation_running = False
         st.sidebar.warning("Simulation paused")
-if st.sidebar.button("Reset"):
-    simulator.stop()
-    simulator.network = NeuralNetwork()
-    simulator.network.add_node(visible=True)
-    simulation_running = False
+
+if st.sidebar.button("🔄 Reset", key="reset_sim"):
+    st.session_state.simulator.stop()
+    st.session_state.simulator = NetworkSimulator()
+    st.session_state.simulator.network.add_node(visible=True)
+    st.session_state.simulation_running = False
     st.sidebar.error("Simulation reset")
 
-speed = st.sidebar.slider("Simulation Speed", min_value=0.2, max_value=10.0, value=1.0, step=0.1)
+# Simulation parameters
+st.sidebar.header("Simulation Parameters")
+st.session_state.speed = st.sidebar.slider("Simulation Speed", min_value=0.2, max_value=10.0, value=st.session_state.get('speed', 1.0), step=0.2)
 learning_rate = st.sidebar.slider("Learning Rate", min_value=0.01, max_value=0.5, value=0.1, step=0.01)
+
+# Visualization settings
+st.sidebar.header("Visualization Settings")
 viz_mode = st.sidebar.radio("Visualization Mode", options=["3d", "2d"], index=0)
+update_freq = st.sidebar.slider("Display Refresh Rate (fps)", 1, 30, 10, 1)
+st.session_state.update_interval = 1.0 / update_freq
 
-if simulation_running:
-    simulator.send_command({"type": "set_speed", "value": speed})
-    simulator.send_command({"type": "set_learning_rate", "value": learning_rate})
+# Apply settings to running simulation
+if st.session_state.simulation_running:
+    st.session_state.simulator.send_command({"type": "set_speed", "value": st.session_state.speed})
+    st.session_state.simulator.send_command({"type": "set_learning_rate", "value": learning_rate})
 
-if st.sidebar.button("Save"):
-    filename = simulator.save()
+# Node Management
+st.sidebar.header("Node Management")
+node_type_options = list(NODE_TYPES.keys())
+selected_type = st.sidebar.selectbox("Add Node Type", options=node_type_options)
+if st.sidebar.button("➕ Add Node"):
+    st.session_state.simulator.send_command({
+        "type": "add_node", 
+        "visible": True,
+        "node_type": selected_type
+    })
+    st.sidebar.success(f"Added {selected_type} node")
+
+# Save/Load
+st.sidebar.header("Save / Load")
+if st.sidebar.button("💾 Save Network"):
+    filename = st.session_state.simulator.save()
     st.sidebar.success(f"Network saved to {filename}")
 
 saved_files = list_saved_simulations()
-selected_file = st.sidebar.selectbox("Load Saved Network", options=saved_files)
-if st.sidebar.button("Load"):
-    if selected_file:
-        simulator.stop()
+if saved_files:
+    selected_file = st.sidebar.selectbox("Select Network", options=saved_files)
+    if st.sidebar.button("📂 Load Network"):
+        st.session_state.simulator.stop()
         new_simulator = NetworkSimulator.load(selected_file)
-        simulator = new_simulator
-        simulation_running = False
+        st.session_state.simulator = new_simulator
+        st.session_state.simulation_running = False
         st.sidebar.success(f"Loaded network from {selected_file}")
 
-# Main visualization
-st.header("Network Visualization")
-fig = simulator.network.visualize(mode=viz_mode)
-st.plotly_chart(fig)
+# Main display section - continuously updates
+def update_display():
+    # Main visualization
+    with viz_container.container():
+        st.header("Neural Network Visualization")
+        fig = st.session_state.simulator.network.visualize(mode=viz_mode)
+        st.plotly_chart(fig, use_container_width=True)
 
-# Network statistics
-st.header("Network Statistics")
-stats_fig = simulator.network.get_stats_figure()
-st.plotly_chart(stats_fig)
+    # Network statistics
+    with stats_container.container():
+        st.header("Network Statistics")
+        stats_fig = st.session_state.simulator.network.get_stats_figure()
+        st.plotly_chart(stats_fig, use_container_width=True)
 
-# Network summary
-st.header("Network Summary")
-summary = simulator.network.get_network_summary()
-st.json(summary)
+    # Network summary
+    with summary_container.container():
+        col1, col2 = st.columns(2)
+        with col1:
+            st.header("Network Summary")
+            summary = st.session_state.simulator.network.get_network_summary()
+            st.json(summary)
+        with col2:
+            st.header("Simulation Status")
+            active_nodes = len([n for n in st.session_state.simulator.network.nodes if n.visible])
+            st.metric("Active Nodes", active_nodes)
+            st.metric("Total Nodes", len(st.session_state.simulator.network.nodes))
+            st.metric("Simulation Steps", st.session_state.simulator.network.simulation_steps)
+            
+            status = "Running" if st.session_state.simulation_running else "Paused"
+            st.info(f"Simulation Status: {status}")
+
+# Initial display
+update_display()
+
+# Create a placeholder for the refresh button
+refresh_placeholder = st.empty()
+
+# Auto-refresh mechanism for continuous updates
+if st.session_state.simulation_running:
+    auto_refresh = True
+else:
+    with refresh_placeholder.container():
+        auto_refresh = st.button("🔄 Refresh View")
+
+if auto_refresh:
+    # The refresh is handled via this loop and rerun
+    time.sleep(st.session_state.update_interval)
+    update_display()
+    st.session_state.frame_count += 1
+    st.experimental_rerun()
+
+# Helper file creating function
+def create_requirements_file():
+    """Create requirements.txt file for Streamlit deployment."""
+    with open("requirements.txt", "w") as f:
+        f.write("numpy>=1.19.0\n")
+        f.write("networkx>=2.5\n")
+        f.write("plotly>=4.14.0\n")
+        f.write("streamlit>=1.13.0\n")
+
+# Uncomment this to create requirements.txt when needed
+# create_requirements_file()
