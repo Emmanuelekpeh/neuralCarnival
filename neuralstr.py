@@ -1602,6 +1602,8 @@ def _ensure_node_signals():
     for node in st.session_state.simulator.network.nodes:
         if not hasattr(node, 'signals'):
             node.signals = []
+        if not hasattr(node, 'signal_tendrils'):
+            node.signal_tendrils = []
         if not hasattr(node, 'activation_level'):
             node.activation_level = 0.0
         if not hasattr(node, 'activated'):
