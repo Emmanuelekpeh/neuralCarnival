@@ -1340,6 +1340,16 @@ def create_ui():
             help="How often to update the visualization (lower = smoother but more CPU intensive)"
         )
 
+        # Add refresh rate control to reduce flickering
+        st.session_state.refresh_rate = st.slider(
+            "Visualization Refresh Rate", 
+            min_value=1, 
+            max_value=20, 
+            value=st.session_state.get('refresh_rate', 5),
+            step=1,
+            help="How many frames to wait before refreshing visuals (higher = less flickering but less responsiveness)"
+        )
+
         # Apply simulation parameters if running
         if st.session_state.simulation_running:
             st.session_state.simulator.send_command({
@@ -1438,7 +1448,9 @@ def _initialize_session_state():
         'last_update': time.time(),
         'last_display_update': time.time(),
         'show_tendrils': True,
-        'tendril_persistence': 20
+        'tendril_persistence': 20,
+        'refresh_rate': 5,  # Only refresh visualizations every 5 frames
+        'cached_frame': -1  # Track the last frame when visuals were refreshed
     }
     
     for key, value in initial_states.items():
@@ -1483,24 +1495,42 @@ def update_display():
         4. Switch between 3D and 2D visualization modes
         """)
     
-    # Create tabs directly without storing them in session state
-    tabs = st.tabs(["Network View", "Analysis", "Help"])
+    # Cache visualization objects in session state to reduce flickering
+    if 'cached_frame' not in st.session_state:
+        st.session_state.cached_frame = -1
     
+    # Only regenerate visualizations when necessary (based on a refresh rate)
+    should_refresh = (st.session_state.frame_count - st.session_state.cached_frame) >= st.session_state.get('refresh_rate', 5)
+    
+    if should_refresh or not st.session_state.simulation_running:
+        # Cache current frame number
+        st.session_state.cached_frame = st.session_state.frame_count
+        
+        # Generate all visualizations once and store in session state
+        st.session_state.network_fig = st.session_state.simulator.network.visualize(mode=st.session_state.viz_mode)
+        st.session_state.activity_fig = st.session_state.simulator.network.get_activity_heatmap()
+        st.session_state.stats_fig = st.session_state.simulator.network.get_stats_figure()
+        st.session_state.pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
+        st.session_state.strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
+        st.session_state.network_summary = st.session_state.simulator.network.get_network_summary()
+    
+    # Create tabs
+    tab_names = ["Network View", "Analysis", "Help"]
+    tabs = st.tabs(tab_names)
+    
+    # Tab content - use cached visualizations to prevent recalculation
     with tabs[0]:
-        # Network visualization
         col1, col2 = st.columns([2, 1])
         with col1:
             st.header("Neural Network")
-            network_fig = st.session_state.simulator.network.visualize(mode=st.session_state.viz_mode)
-            st.plotly_chart(network_fig, use_container_width=True, key=f"network_viz_{st.session_state.frame_count}")
+            st.plotly_chart(st.session_state.network_fig, use_container_width=True, key="network_viz")
         
         with col2:
             st.header("Activity Heatmap")
-            activity_fig = st.session_state.simulator.network.get_activity_heatmap()
-            st.plotly_chart(activity_fig, use_container_width=True, key=f"activity_viz_{st.session_state.frame_count}")
+            st.plotly_chart(st.session_state.activity_fig, use_container_width=True, key="activity_viz")
 
-        # Add network summary directly in this tab
-        summary = st.session_state.simulator.network.get_network_summary()
+        # Network summary
+        summary = st.session_state.network_summary
         st.markdown(f"""
         **Network Status**: {summary['visible_nodes']} active nodes of {summary['total_nodes']} total  
         **Connections**: {summary['total_connections']} ({summary['avg_connections']} avg per node)  
@@ -1511,22 +1541,18 @@ def update_display():
         col1, col2 = st.columns(2)
         with col1:
             st.header("Network Statistics")
-            stats_fig = st.session_state.simulator.network.get_stats_figure()
-            if stats_fig:
-                st.plotly_chart(stats_fig, use_container_width=True, key=f"stats_viz_{st.session_state.frame_count}")
+            if st.session_state.stats_fig:
+                st.plotly_chart(st.session_state.stats_fig, use_container_width=True, key="stats_viz")
         
         with col2:
-            if st.session_state.frame_count % 5 == 0:  # Update less frequently
-                st.header("Firing Patterns")
-                pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
-                st.plotly_chart(pattern_fig, use_container_width=True, key=f"pattern_viz_{st.session_state.frame_count}")
-                
-                st.header("Connection Strength")
-                strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
-                st.plotly_chart(strength_fig, use_container_width=True, key=f"strength_viz_{st.session_state.frame_count}")
+            st.header("Firing Patterns")
+            st.plotly_chart(st.session_state.pattern_fig, use_container_width=True, key="pattern_viz")
+            
+            st.header("Connection Strength")
+            st.plotly_chart(st.session_state.strength_fig, use_container_width=True, key="strength_viz")
 
     with tabs[2]:
-        # Help tab
+        # Help tab content (unchanged)
         st.markdown("""
         ## How It Works
         
@@ -1558,6 +1584,12 @@ def update_display():
         - Increase the simulation speed
         """)
 
+    # Update the active tab based on user interaction
+    # (This is a workaround since Streamlit doesn't provide a direct way to track active tab)
+    for i, tab_name in enumerate(tab_names):
+        if tabs[i].selectbox(f"Select {tab_name}", [tab_name], key=f"tab_select_{i}", label_visibility="collapsed") == tab_name:
+            st.session_state.active_tab = i
+
 # Initialize the app
 st.set_page_config(page_title="Neural Network Simulation", layout="wide")
 st.title("Neural Network Growth Simulation")
@@ -1581,12 +1613,16 @@ if st.session_state.simulation_running:
     
     # Only update the display at the specified interval
     if display_elapsed > st.session_state.display_update_interval:
-        update_display()
-        st.session_state.last_display_update = current_time
         st.session_state.frame_count += 1
+        st.session_state.last_display_update = current_time
         
-        # Use rerun with a delay to keep the UI responsive but not too frequent
-        time.sleep(0.01)
+        # Check if simulation has run for at least 10 steps before visual refresh
+        # This helps reduce initial flickering while the network stabilizes
+        if st.session_state.frame_count > 10:
+            update_display()
+            
+        # Use rerun with a longer delay to reduce flicker
+        time.sleep(max(0.05, st.session_state.display_update_interval / 10))
         st.rerun()
 else:
     # When paused, just update the display once
