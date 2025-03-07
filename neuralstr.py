@@ -678,7 +678,7 @@ class NeuralNetwork:
                     showlegend=False
                 ))
                 
-                # Add small arrow to show direction (neuron connection direction)
+                # Add direction indicator (don't use arrow symbol as it's not supported in 3D)
                 arrow_pos = 0.7  # 70% along the path
                 arrow_idx = int(arrow_pos * (len(x_vals)-1))
                 if arrow_idx < len(x_vals)-1:
@@ -688,11 +688,10 @@ class NeuralNetwork:
                         z=[z_vals[arrow_idx]],
                         mode='markers',
                         marker=dict(
-                            symbol='arrow',
-                            size=8,
+                            symbol='diamond',
+                            size=5,
                             color=color,
-                            opacity=0.8,
-                            angle=(180/np.pi) * np.arctan2(y1-y0, x1-x0)
+                            opacity=0.8
                         ),
                         hoverinfo='none',
                         showlegend=False
@@ -700,7 +699,7 @@ class NeuralNetwork:
 
         # Now add active signals
         for node in self.nodes:
-            if node.visible and node.signals:
+            if node.visible and hasattr(node, 'signals') and node.signals:
                 for signal in node.signals:
                     target_id = signal['target_id']
                     if target_id < len(self.nodes) and self.nodes[target_id].visible:
@@ -1335,8 +1334,21 @@ if saved_files:
         st.sidebar.success(f"Loaded network from {selected_file}")
 
 # Main display section - continuously updates
+def _ensure_node_signals():
+    """Make sure all nodes have the signals attribute"""
+    for node in st.session_state.simulator.network.nodes:
+        if not hasattr(node, 'signals'):
+            node.signals = []
+        if not hasattr(node, 'activation_level'):
+            node.activation_level = 0.0
+        if not hasattr(node, 'activated'):
+            node.activated = False
+
 def update_display():
     """Update the visualization with unique keys for each Plotly chart."""
+    # Ensure all nodes have necessary attributes
+    _ensure_node_signals()
+    
     # Main visualization
     with viz_container.container():
         st.header("Neural Network Visualization")
@@ -1360,11 +1372,12 @@ def update_display():
             st.header("Information Transfer")
             
             # Count active signals in the network
-            active_signals = sum(len(node.signals) for node in st.session_state.simulator.network.nodes if node.visible)
+            active_signals = sum(len(getattr(node, 'signals', [])) for node in st.session_state.simulator.network.nodes if node.visible)
             st.metric("Active Signals", active_signals, help="Number of information signals traveling between neurons")
             
             # Count active neurons
-            active_neurons = sum(1 for node in st.session_state.simulator.network.nodes if node.visible and node.activated)
+            active_neurons = sum(1 for node in st.session_state.simulator.network.nodes 
+                               if node.visible and hasattr(node, 'activated') and node.activated)
             st.metric("Active Neurons", active_neurons, help="Number of currently activated neurons")
             
             # Show simulation status
@@ -1375,11 +1388,11 @@ def update_display():
             if active_neurons > 0:
                 # Calculate average connection strength among active neurons
                 active_node_ids = [node.id for node in st.session_state.simulator.network.nodes 
-                                  if node.visible and node.activated]
+                                  if node.visible and hasattr(node, 'activated') and node.activated]
                 pathway_strengths = []
                 
                 for node in st.session_state.simulator.network.nodes:
-                    if node.visible and node.activated:
+                    if node.visible and hasattr(node, 'activated') and node.activated:
                         for conn_id, strength in node.connections.items():
                             if conn_id in active_node_ids:
                                 pathway_strengths.append(strength)
@@ -1395,14 +1408,24 @@ update_display()
 # Create a placeholder for the refresh button
 refresh_placeholder = st.empty()
 
+# Improve animation performance by using statefulness instead of constant reruns
+if 'animation_enabled' not in st.session_state:
+    st.session_state.animation_enabled = True
+
+# Create a checkbox for enabling/disabling animation
+st.sidebar.header("Animation Settings")
+animation_enabled = st.sidebar.checkbox("Enable Auto-Refresh", value=st.session_state.animation_enabled)
+st.session_state.animation_enabled = animation_enabled
+
 # Auto-refresh mechanism for continuous updates
-if st.session_state.simulation_running:
+if st.session_state.animation_enabled and st.session_state.simulation_running:
     # Add a frame rate counter in the corner
     st.sidebar.markdown(f"**Frame: {st.session_state.frame_count}**")
     
     # Schedule the next update with a more efficient approach
     current_time = time.time()
-    if current_time - st.session_state.last_update > st.session_state.update_interval:
+    elapsed = current_time - st.session_state.last_update
+    if elapsed > st.session_state.update_interval:
         # Update the display only when interval has passed
         st.session_state.last_update = current_time
         st.session_state.frame_count += 1
@@ -1410,9 +1433,9 @@ if st.session_state.simulation_running:
     # Always rerun when simulation is active, but with a small delay
     # to prevent excessive CPU usage
     time.sleep(0.05)
-    st.rerun()  # Changed from st.experimental_rerun() to st.rerun()
+    st.rerun()  # Use st.rerun() instead of st.experimental_rerun()
 else:
-    # When paused, provide a manual refresh option
+    # When paused or animation disabled, provide a manual refresh option
     with refresh_placeholder.container():
         if st.button("🔄 Refresh View", key="manual_refresh"):
             update_display()
