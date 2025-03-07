@@ -1,3 +1,36 @@
+import random
+import os
+import pickle
+import time
+import threading
+import queue
+import streamlit as st
+import math
+from collections import deque
+from scipy.spatial import cKDTree
+
+# Import dependencies with error handling
+try:
+    import numpy as np
+except ImportError:
+    st.error("Missing dependency: numpy. Please install it with 'pip install numpy'")
+    st.stop()
+    
+try:
+    import networkx as nx
+except ImportError:
+    st.error("Missing dependency: networkx. Please install it with 'pip install networkx'")
+    st.stop()
+
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+except ImportError:
+    st.error("Missing dependency: plotly. Please install it with 'pip install plotly'")
+    st.stop()
+    
+import base64
+from datetime import datetime
 # Initialize the app - MOVED TO TOP OF FILE FOR PROPER INITIALIZATION
 st.set_page_config(page_title="Neural Network Simulation", layout="wide")
 st.title("Neural Network Growth Simulation")
