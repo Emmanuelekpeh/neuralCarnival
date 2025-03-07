@@ -1,5 +1,6 @@
 try:
     import streamlit as st
+    import streamlit.components.v1 as components  # Add this missing import
     import numpy as np
     import networkx as nx
     from plotly.subplots import make_subplots
@@ -1180,22 +1181,9 @@ def parse_contents(contents, filename):
 
 def create_ui():
     """Create the main Streamlit UI."""
-    # Create custom component for Three.js visualization
-    if 'threejs_component' not in st.session_state:
-        st.session_state.threejs_component = components.declare_component(
-            "neural_network_3d",
-            path="frontend/build"
-        )
-    
-    # Create display containers
+    # Create display containers - removing the Three.js component reference
     viz_container = st.empty()
     stats_container = st.empty()
-    
-    with viz_container:
-        # Use Three.js component for visualization
-        network_data = st.session_state.simulator.network.visualize()
-        if network_data:
-            st.session_state.threejs_component(network_data=network_data, key="network_viz")
     
     # Sidebar controls
     with st.sidebar:
@@ -1219,7 +1207,7 @@ def create_ui():
         speed = st.slider("Simulation Speed", 0.2, 10.0, 1.0, 0.2)
         learning_rate = st.slider("Learning Rate", 0.01, 0.5, 0.1, 0.01)
         
-        # Visualization mode selector - moved from create_ui to main app code
+        # Visualization mode selector
         st.header("Visualization")
         viz_mode = st.radio(
             "Display Mode", 
@@ -1259,6 +1247,7 @@ def create_ui():
             if st.button("📂 Load Network"):
                 st.session_state.simulator = NetworkSimulator.load(selected_file)
                 st.success(f"Loaded network from {selected_file}")
+    
     return viz_container, stats_container
 
 def _initialize_session_state():
