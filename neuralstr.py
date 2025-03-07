@@ -205,6 +205,7 @@ class Node:
             'serotonin': 0.0,
             'noradrenaline': 0.0
         }
+        self.signal_tendrils = []  # Store active tendrils for visualization
             
     def fire(self, network):
         """Attempt to fire and connect to other nodes with behavior based on node type."""
@@ -228,47 +229,38 @@ class Node:
         self.last_fired = 0
         self.activated = True
         self.activation_level = 1.0
-        target = None
-        # Node type specific behavior
-        if self.type == 'explorer':
-            # Random connections
-            target = random.choice(network.nodes)
-        elif self.type == 'connector':
-            # Prefer highly connected nodes
-            if random.random() < 0.7:
-                target = max(network.nodes, key=lambda n: len(n.connections) if n.visible else 0)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'memory':
-            # Reuse recent connections
-            if self.connections and random.random() < 0.8:
-                target_id = random.choice(list(self.connections.keys()))
-                target = next((n for n in network.nodes if n.id == target_id), None)
-        elif self.type == 'oscillator':
-            # Rhythmic firing patterns
-            self.cycle_counter += 1
-            wave_position = np.sin(self.cycle_counter / 10) * 0.5 + 0.5
-            min_rate, max_rate = self.properties['firing_rate']
-            self.firing_rate = min_rate + wave_position * (max_rate - min_rate)
-            target = random.choice(network.nodes)
-        # Create signal when firing
-        if target and target.visible and target.id != self.id:
-            signal = {
+        
+        # Create multiple exploration tendrils
+        num_tendrils = random.randint(1, 3)
+        for _ in range(num_tendrils):
+            # Choose random targets for each tendril
+            potential_targets = [n for n in network.nodes if n.visible and n.id != self.id]
+            if not potential_targets:
+                continue
+            
+            target = random.choice(potential_targets)
+            
+            # Create a tendril (visual signal but doesn't necessarily form connection)
+            tendril = {
                 'target_id': target.id,
                 'strength': 1.0,
                 'progress': 0.0,
-                'duration': 15,
-                'channel': self.channel
+                'duration': 20,
+                'channel': self.channel,
+                'success': random.random() < 0.3  # Only some tendrils successfully connect
             }
-            self.signals.append(signal)
-            self.connection_attempts += 1
-            self.connect(target)
-            # Update node memory
-            self.memory = max(self.memory, self.size)
-            self.last_targets.add(target.id)
-            if len(self.last_targets) > 10:
-                self.last_targets.pop()
-                
+            self.signal_tendrils.append(tendril)
+            
+            # Only count connection attempt for real connection attempts
+            if tendril['success']:
+                self.connection_attempts += 1
+                self.connect(target)
+                # Update node memory
+                self.memory = max(self.memory, self.size)
+                self.last_targets.add(target.id)
+                if len(self.last_targets) > 10:
+                    self.last_targets.pop()
+
     def connect(self, other_node):
         strength = self.properties['connection_strength']
         if len(self.connections) < self.max_connections:
@@ -304,13 +296,14 @@ class Node:
                 self.velocity[i] *= -0.5
 
     def process_signals(self, network):
-        """Process and update node signals."""
+        """Process and update node signals and tendrils."""
         # Update activation level decay
         if self.activated:
             self.activation_level *= 0.95
             if self.activation_level < 0.05:
                 self.activated = False
                 self.activation_level = 0.0
+                
         # Update signal progress and handle completions
         for signal in list(self.signals):
             signal['progress'] = min(1.0, signal['progress'] + 0.05)
@@ -323,6 +316,13 @@ class Node:
                 signal['duration'] += 1
             elif self.type == 'catalyst':
                 signal['strength'] *= 1.05
+                
+        # Update tendril progress
+        for tendril in list(self.signal_tendrils):
+            tendril['progress'] = min(1.0, tendril['progress'] + 0.03)
+            tendril['duration'] -= 1
+            if tendril['progress'] >= 1.0 or tendril['duration'] <= 0:
+                self.signal_tendrils.remove(tendril)
 
     def backpropagate(self, target_value=None, upstream_gradient=None):
         """Implement backpropagation for learning."""
@@ -735,7 +735,7 @@ class NeuralNetwork:
         return self._visualize_2d()
 
     def _visualize_3d(self):
-        """Create 3D visualization of the network."""
+        """Create 3D visualization of the network with tendrils."""
         fig = go.Figure()
         pos = self.calculate_3d_layout()
 
@@ -755,7 +755,64 @@ class NeuralNetwork:
                     hoverinfo='none'
                 ))
 
-        # Create traces for nodes
+        # Create traces for tendrils (signal attempts) - FIXED
+        for node in self.nodes:
+            if node.visible and hasattr(node, 'signal_tendrils'):
+                for tendril in node.signal_tendrils:
+                    target_id = tendril['target_id']
+                    if target_id < len(self.nodes) and node.id in pos and target_id in pos:
+                        x0, y0, z0 = pos[node.id]
+                        x1, y1, z1 = pos[target_id]
+                        
+                        # Create dynamic, curved line for tendril
+                        progress = tendril['progress']
+                        points = 10
+                        x_vals = []
+                        y_vals = []
+                        z_vals = []
+                        
+                        # Base curve parameters with randomized curve
+                        curve_height = 1.0 + random.random() * 0.5
+                        # Add some randomness to make tendrils more visually interesting
+                        mid_x = x0 + (x1 - x0) * 0.5 + random.uniform(-0.5, 0.5)
+                        mid_y = y0 + (y1 - y0) * 0.5 + random.uniform(-0.5, 0.5)
+                        mid_z = z0 + (z1 - z0) * 0.5 + curve_height
+                        
+                        # Generate points along the curve up to current progress
+                        for i in range(int(points * progress) + 1):
+                            t = i / points
+                            # Quadratic Bezier curve
+                            x = (1-t)**2 * x0 + 2*(1-t)*t * mid_x + t**2 * x1
+                            y = (1-t)**2 * y0 + 2*(1-t)*t * mid_y + t**2 * y1
+                            z = (1-t)**2 * z0 + 2*(1-t)*t * mid_z + t**2 * z1
+                            x_vals.append(x)
+                            y_vals.append(y)
+                            z_vals.append(z)
+                        
+                        # Create color based on tendril properties with more dynamic appearance
+                        alpha = 0.7 if tendril['progress'] < 0.5 else max(0.1, 0.8 - tendril['progress'] * 0.5)
+                        if tendril['success']:
+                            color = f'rgba(255,100,100,{alpha})'  # Red for successful connections
+                        else:
+                            color = f'rgba(100,100,255,{alpha})'  # Blue for exploration attempts
+                        
+                        # Add pulsating effect based on progress
+                        width = 2 + tendril['strength'] + math.sin(tendril['progress'] * math.pi) * 0.5
+                        
+                        edge_traces.append(go.Scatter3d(
+                            x=x_vals,
+                            y=y_vals,
+                            z=z_vals,
+                            mode='lines',
+                            line=dict(
+                                color=color,
+                                width=width
+                            ),
+                            hoverinfo='none',
+                            showlegend=False
+                        ))
+
+        # Create traces for nodes (rest of the code is unchanged)
         nodes_by_type = {}
         for node in self.nodes:
             if node.visible and node.id in pos:
@@ -1075,6 +1132,9 @@ class NetworkSimulator:
         self.steps_per_second = 1.0
         self.thread = None
         self.lock = threading.Lock()
+        self.auto_generate_nodes = True
+        self.node_generation_rate = 0.05
+        self.max_nodes = max_nodes
     
     def start(self, steps_per_second=1.0):
         """Start the simulation in a separate thread."""
@@ -1101,6 +1161,16 @@ class NetworkSimulator:
             if elapsed >= 1.0 / self.steps_per_second:
                 with self.lock:
                     self.network.step()
+                    
+                    # Auto-generate nodes if enabled - MODIFIED to use equal probability
+                    if self.auto_generate_nodes and len(self.network.nodes) < self.max_nodes:
+                        if random.random() < self.node_generation_rate:
+                            # Equal probability for each node type instead of weighted by connections
+                            node_types = list(NODE_TYPES.keys())
+                            # Use completely uniform probability
+                            node_type = random.choice(node_types)
+                            self.network.add_node(visible=True, node_type=node_type)
+                    
                     self._process_commands()
                 self.last_step = current_time
             time.sleep(0.001)  # Prevent busy waiting
@@ -1127,6 +1197,10 @@ class NetworkSimulator:
             self.steps_per_second = cmd['value']
         elif cmd_type == 'set_learning_rate':
             self.network.learning_rate = cmd['value']
+        elif cmd_type == 'set_auto_generate':
+            self.auto_generate_nodes = cmd['value']
+            self.node_generation_rate = cmd['rate']
+            self.max_nodes = cmd['max_nodes']
 
     def send_command(self, command):
         """Add a command to the queue."""
@@ -1204,15 +1278,44 @@ def create_ui():
             if st.button("🔄 Reset", key="reset_sim", use_container_width=True):
                 st.session_state.simulator.stop()
                 st.session_state.simulator = NetworkSimulator()
-                # Auto-populate with initial nodes
-                auto_populate_nodes(st.session_state.simulator.network, 15)
+                # Start with just a few seed nodes instead of auto-populating
+                for _ in range(3):
+                    st.session_state.simulator.network.add_node(visible=True)
                 st.session_state.simulation_running = False
         
         # Parameters section
         st.markdown("## Parameters")
         st.markdown("---")
+        
+        # Simulation parameters
         speed = st.slider("Simulation Speed", 0.2, 10.0, 1.0, 0.2,
-                          help="Control how fast the simulation runs")
+                         help="Control how fast the simulation runs")
+        
+        # Node generation parameters
+        st.session_state.auto_node_generation = st.checkbox("Auto-generate Nodes", 
+                                                           value=st.session_state.get('auto_node_generation', True),
+                                                           help="Automatically generate new nodes over time")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.session_state.node_generation_rate = st.number_input(
+                "Generation Rate", 
+                min_value=0.01, 
+                max_value=1.0, 
+                value=st.session_state.get('node_generation_rate', 0.05),
+                step=0.01,
+                help="Probability of new node per step"
+            )
+        with col2:
+            st.session_state.max_nodes = st.number_input(
+                "Max Nodes", 
+                min_value=10, 
+                max_value=500, 
+                value=st.session_state.get('max_nodes', 200),
+                step=10,
+                help="Maximum number of nodes"
+            )
+        
         learning_rate = st.slider("Learning Rate", 0.01, 0.5, 0.1, 0.01,
                                  help="Controls how quickly nodes learn from connections")
         
@@ -1226,6 +1329,16 @@ def create_ui():
             help="Choose between 3D and 2D visualization"
         )
         st.session_state.viz_mode = viz_mode
+        
+        # Display update frequency
+        st.session_state.display_update_interval = st.slider(
+            "Display Update Interval (sec)", 
+            min_value=0.1, 
+            max_value=2.0, 
+            value=st.session_state.get('display_update_interval', 0.5),
+            step=0.1,
+            help="How often to update the visualization (lower = smoother but more CPU intensive)"
+        )
 
         # Apply simulation parameters if running
         if st.session_state.simulation_running:
@@ -1237,23 +1350,19 @@ def create_ui():
                 "type": "set_learning_rate",
                 "value": learning_rate
             })
+            st.session_state.simulator.send_command({
+                "type": "set_auto_generate",
+                "value": st.session_state.auto_node_generation,
+                "rate": st.session_state.node_generation_rate,
+                "max_nodes": st.session_state.max_nodes
+            })
         
         # Advanced section - Node Management
         with st.expander("Advanced Options", expanded=False):
-            st.markdown("### Node Management")
-            
-            # Auto-populate button
-            col1, col2 = st.columns(2)
-            with col1:
-                node_count = st.number_input("Node Count", 5, 50, 10, 1)
-            with col2:
-                if st.button("🧠 Auto-Populate", key="auto_populate"):
-                    auto_populate_nodes(st.session_state.simulator.network, node_count)
-                    st.success(f"Added {node_count} nodes of various types")
-            
             # Manual node addition
+            st.markdown("### Manual Node Control")
             node_type = st.selectbox("Add Node Type", list(NODE_TYPES.keys()))
-            if st.button("➕ Add Single Node"):
+            if st.button("➕ Add Node"):
                 st.session_state.simulator.send_command({
                     "type": "add_node",
                     "visible": True,
@@ -1272,6 +1381,24 @@ def create_ui():
                 if st.button("📂 Load Network"):
                     st.session_state.simulator = NetworkSimulator.load(selected_file)
                     st.success(f"Loaded network from {selected_file}")
+        
+        # Add an option to control tendril visualization
+        st.markdown("## Visual Effects")
+        st.markdown("---")
+        
+        st.session_state.show_tendrils = st.checkbox(
+            "Show Connection Tendrils", 
+            value=st.session_state.get('show_tendrils', True),
+            help="Show the tendrils fired by nodes when attempting connections"
+        )
+        
+        st.session_state.tendril_persistence = st.slider(
+            "Tendril Duration", 
+            min_value=5, 
+            max_value=50, 
+            value=st.session_state.get('tendril_persistence', 20),
+            help="How many simulation steps tendrils remain visible"
+        )
     
     return viz_container, stats_container
 
@@ -1301,11 +1428,17 @@ def _initialize_session_state():
     initial_states = {
         'simulation_running': False,
         'viz_mode': '3d',
-        'update_interval': 0.05,
+        'auto_node_generation': True,
+        'node_generation_rate': 0.05,
+        'max_nodes': 200,
+        'display_update_interval': 0.5,
         'frame_count': 0,
         'animation_enabled': True,
         'simulation_speed': 1.0,
-        'last_update': time.time()
+        'last_update': time.time(),
+        'last_display_update': time.time(),
+        'show_tendrils': True,
+        'tendril_persistence': 20
     }
     
     for key, value in initial_states.items():
@@ -1314,8 +1447,9 @@ def _initialize_session_state():
             
     if 'simulator' not in st.session_state:
         st.session_state.simulator = NetworkSimulator()
-        # Auto-populate with initial nodes instead of just one
-        auto_populate_nodes(st.session_state.simulator.network, 15)
+        # Start with just a few seed nodes
+        for _ in range(3):
+            st.session_state.simulator.network.add_node(visible=True)
 
 # ...existing code...
 
@@ -1332,7 +1466,7 @@ def update_display():
         
         **Instructions:**
         1. Click **▶️ Start** to begin the simulation
-        2. Observe how different node types interact
+        2. Observe how nodes automatically appear and form connections
         3. Use the sidebar to adjust simulation parameters
         4. Switch between 3D and 2D visualization modes
         """)
@@ -1352,6 +1486,14 @@ def update_display():
             st.header("Activity Heatmap")
             activity_fig = st.session_state.simulator.network.get_activity_heatmap()
             st.plotly_chart(activity_fig, use_container_width=True, key=f"activity_viz_{st.session_state.frame_count}")
+
+        # Add network summary directly in this tab
+        summary = st.session_state.simulator.network.get_network_summary()
+        st.markdown(f"""
+        **Network Status**: {summary['visible_nodes']} active nodes of {summary['total_nodes']} total  
+        **Connections**: {summary['total_connections']} ({summary['avg_connections']} avg per node)  
+        **Runtime**: {summary['runtime']}
+        """)
 
     with tabs[1]:
         col1, col2 = st.columns(2)
@@ -1387,36 +1529,56 @@ def update_display():
         
         Nodes form connections, transmit signals, and can die or resurrect based on their energy levels.
         
+        ## Auto-generation of Nodes
+        
+        By default, new nodes are automatically added over time based on the node generation rate.
+        New nodes are more likely to be of types that have been successful in forming connections.
+        
         ## Troubleshooting
         
-        **Nodes not active?**
-        - Make sure to press the Start button
-        - Add more nodes with Auto-Populate
-        - Increase the simulation speed
-        
-        **Visualization too cluttered?**
+        **Visualization lagging?**
+        - Increase the display update interval
         - Switch to 2D mode
-        - Restart with fewer nodes
+        - Reduce the maximum number of nodes
+        
+        **Want more connections?**
+        - Increase the learning rate
+        - Increase the simulation speed
         """)
 
-# Replace the main simulation loop with this optimized version
-def run_simulation():
-    while st.session_state.simulation_running:
-        current_time = time.time()
-        elapsed = current_time - st.session_state.last_update
+# Initialize the app
+st.set_page_config(page_title="Neural Network Simulation", layout="wide")
+st.title("Neural Network Growth Simulation")
+
+# GPU status indicator
+if cp is not None:
+    st.sidebar.success("🚀 GPU acceleration enabled")
+else:
+    st.sidebar.warning("⚠️ Running in CPU-only mode")
+
+# Initialize all session state variables
+_initialize_session_state()
+
+# Create display containers
+viz_container, stats_container = create_ui()
+
+# Main simulation loop with optimized display updates
+if st.session_state.simulation_running:
+    current_time = time.time()
+    display_elapsed = current_time - st.session_state.get('last_display_update', 0)
+    
+    # Only update the display at the specified interval
+    if display_elapsed > st.session_state.display_update_interval:
+        update_display()
+        st.session_state.last_display_update = current_time
+        st.session_state.frame_count += 1
         
-        if elapsed > st.session_state.update_interval:
-            # Run multiple simulation steps per visual update
-            steps = max(1, int(st.session_state.simulation_speed * 3))
-            with st.session_state.simulator.lock:
-                for _ in range(steps):
-                    st.session_state.simulator.network.step()
-            
-            st.session_state.last_update = current_time
-            st.session_state.frame_count += 1
-            
-            # Force rerun without sleep to maintain responsiveness
-            st.rerun()
+        # Use rerun with a delay to keep the UI responsive but not too frequent
+        time.sleep(0.01)
+        st.rerun()
+else:
+    # When paused, just update the display once
+    update_display()
 
 # Create requirements file if needed
 if not os.path.exists("requirements.txt"):
@@ -1444,42 +1606,3 @@ def _ensure_node_signals():
             node.activation_level = 0.0
         if not hasattr(node, 'activated'):
             node.activated = False
-
-# Initialize the app
-st.set_page_config(page_title="Neural Network Simulation", layout="wide")
-st.title("Neural Network Growth Simulation")
-
-# GPU status indicator
-if cp is not None:
-    st.sidebar.success("🚀 GPU acceleration enabled")
-else:
-    st.sidebar.warning("⚠️ Running in CPU-only mode")
-
-# Initialize all session state variables
-_initialize_session_state()
-
-# Create display containers
-viz_container, stats_container = create_ui()
-
-# Main simulation loop
-if st.session_state.simulation_running:
-    current_time = time.time()
-    elapsed = current_time - st.session_state.last_update
-    
-    if elapsed > st.session_state.update_interval:
-        steps = max(1, int(st.session_state.simulation_speed * 3))
-        with st.session_state.simulator.lock:
-            for _ in range(steps):
-                st.session_state.simulator.network.step()
-        
-        update_display()
-        st.session_state.last_update = current_time
-        st.session_state.frame_count += 1
-        time.sleep(0.01)  # Small delay to prevent excessive CPU usage
-        st.rerun()
-else:
-    update_display()  # Show current state when paused
-
-# Create requirements file if needed
-if not os.path.exists("requirements.txt"):
-    create_requirements_file()
