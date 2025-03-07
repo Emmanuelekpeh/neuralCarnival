@@ -734,39 +734,78 @@ class NeuralNetwork:
         return self._visualize_2d()
 
     def _visualize_3d(self):
-        """Generate 3D visualization of the network."""
+        """Create 3D visualization of the network."""
         fig = go.Figure()
         pos = self.calculate_3d_layout()
-                    'position': node.position,
-                    'size': node.size,
-                    'color': NODE_TYPES[node.type]['color'],
-                    'type': node.type,
-                    'energy': node.energy,
-                    'connections': len(node.connections)
-                }
-                for node in self.nodes if node.visible
-            ],
-            'edges': [
-                {
-                    'source': edge[0],
-                    'target': edge[1],
-                    'strength': self.nodes[edge[0]].connections.get(edge[1], 0)
-                }
-                for edge in self.graph.edges()
-            ],
-            'signals': [
-                {
-                    'source': node.id,
-                    'target': signal['target_id'],
-                    'progress': signal['progress']
-                }
-                for node in self.nodes
-                if node.visible and node.signals
-                for signal in node.signals
-            ]
-        }
+
+        # Create traces for edges
+        edge_traces = []
+        for edge in self.graph.edges(data=True):
+            u, v, data = edge
+            if u in pos and v in pos:
+                x0, y0, z0 = pos[u]
+                x1, y1, z1 = pos[v]
+                edge_traces.append(go.Scatter3d(
+                    x=[x0, x1, None],
+                    y=[y0, y1, None],
+                    z=[z0, z1, None],
+                    mode='lines',
+                    line=dict(color='rgba(100,100,100,0.3)', width=1),
+                    hoverinfo='none'
+                ))
+
+        # Create traces for nodes
+        nodes_by_type = {}
+        for node in self.nodes:
+            if node.visible and node.id in pos:
+                if node.type not in nodes_by_type:
+                    nodes_by_type[node.type] = {
+                        'x': [], 'y': [], 'z': [],
+                        'sizes': [], 'text': []
+                    }
+                x, y, z = pos[node.id]
+                nodes_by_type[node.type]['x'].append(x)
+                nodes_by_type[node.type]['y'].append(y)
+                nodes_by_type[node.type]['z'].append(z)
+                nodes_by_type[node.type]['sizes'].append(node.size/3)
+                nodes_by_type[node.type]['text'].append(
+                    f"Node {node.id}<br>"
+                    f"Type: {node.type}<br>"
+                    f"Energy: {node.energy:.1f}<br>"
+                    f"Connections: {len(node.connections)}"
+                )
+
+        # Add all traces to figure
+        for edge_trace in edge_traces:
+            fig.add_trace(edge_trace)
+
+        for node_type, data in nodes_by_type.items():
+            fig.add_trace(go.Scatter3d(
+                x=data['x'],
+                y=data['y'],
+                z=data['z'],
+                mode='markers',
+                marker=dict(
+                    size=data['sizes'],
+                    color=NODE_TYPES[node_type]['color'],
+                    opacity=0.8
+                ),
+                text=data['text'],
+                hoverinfo='text',
+                name=node_type
+            ))
+
+        fig.update_layout(
+            showlegend=True,
+            scene=dict(
+                xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+                yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+                zaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+            ),
+            margin=dict(l=0, r=0, t=0, b=0)
+        )
         
-        return data
+        return fig
 
     def get_stats_figure(self):
         """Generate network statistics visualization."""
