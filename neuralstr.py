@@ -1147,6 +1147,14 @@ class NetworkSimulator:
         self.auto_generate_nodes = True
         self.node_generation_rate = 0.05
         self.max_nodes = max_nodes
+        self.visualization_buffer = {
+            'last_render_time': time.time(),
+            'steps_since_render': 0,
+            'network_state': {},
+            'render_needed': True
+        }
+        self.render_frequency = 5  # Only render every X simulation steps
+        self.render_interval = 0.5  # Minimum seconds between renders
     
     def start(self, steps_per_second=1.0):
         """Start the simulation in a separate thread."""
@@ -1166,26 +1174,62 @@ class NetworkSimulator:
             self.thread = None
 
     def _run_simulation(self):
-        """Main simulation loop."""
+        """Main simulation loop with buffered visualization."""
         while self.running:
             current_time = time.time()
             elapsed = current_time - self.last_step
             if elapsed >= 1.0 / self.steps_per_second:
                 with self.lock:
+                    # Process simulation step
                     self.network.step()
                     
-                    # Auto-generate nodes if enabled - MODIFIED to use equal probability
+                    # Auto-generate nodes if enabled
                     if self.auto_generate_nodes and len(self.network.nodes) < self.max_nodes:
                         if random.random() < self.node_generation_rate:
-                            # Equal probability for each node type instead of weighted by connections
                             node_types = list(NODE_TYPES.keys())
-                            # Use completely uniform probability
                             node_type = random.choice(node_types)
                             self.network.add_node(visible=True, node_type=node_type)
                     
                     self._process_commands()
+                    
+                    # Track visualization state
+                    self.visualization_buffer['steps_since_render'] += 1
+                    
+                    # Only mark for rendering at specific intervals
+                    elapsed_render_time = current_time - self.visualization_buffer['last_render_time']
+                    if (self.visualization_buffer['steps_since_render'] >= self.render_frequency and 
+                        elapsed_render_time >= self.render_interval):
+                        self.visualization_buffer['render_needed'] = True
+                        self.visualization_buffer['steps_since_render'] = 0
+                        self.visualization_buffer['last_render_time'] = current_time
+                        
+                        # Snapshot current network state for rendering
+                        visible_nodes = sum(1 for n in self.network.nodes if n.visible)
+                        total_connections = sum(len(n.connections) for n in self.network.nodes)
+                        self.visualization_buffer['network_state'] = {
+                            'visible_nodes': visible_nodes,
+                            'total_nodes': len(self.network.nodes),
+                            'connections': total_connections,
+                            'steps': self.network.simulation_steps
+                        }
+                        
                 self.last_step = current_time
             time.sleep(0.001)  # Prevent busy waiting
+
+    def needs_render(self):
+        """Check if visualization needs to be updated."""
+        with self.lock:
+            return self.visualization_buffer['render_needed']
+            
+    def mark_rendered(self):
+        """Mark current state as rendered."""
+        with self.lock:
+            self.visualization_buffer['render_needed'] = False
+    
+    def get_rendering_state(self):
+        """Get current state for rendering."""
+        with self.lock:
+            return self.visualization_buffer['network_state'].copy()
 
     def _process_commands(self):
         """Process any pending commands."""
@@ -1436,6 +1480,40 @@ def create_ui():
             st.session_state.force_refresh = True
             # Add a small delay to ensure the refresh happens after the UI updates
             time.sleep(0.2)
+        
+        # Add visualization buffering controls
+        st.markdown("## Rendering Settings")
+        st.markdown("---")
+        
+        st.session_state.buffered_rendering = st.checkbox(
+            "Use Buffered Rendering", 
+            value=st.session_state.get('buffered_rendering', True),
+            help="Process simulation at full speed but update visuals at a controlled rate for better performance"
+        )
+        
+        if st.session_state.buffered_rendering:
+            st.session_state.render_frequency = st.slider(
+                "Simulation Steps Per Render", 
+                min_value=1, 
+                max_value=20, 
+                value=st.session_state.get('render_frequency', 5),
+                step=1,
+                help="How many simulation steps to process before updating the visualization"
+            )
+            
+            st.session_state.render_interval = st.slider(
+                "Minimum Seconds Between Renders", 
+                min_value=0.1, 
+                max_value=2.0, 
+                value=st.session_state.get('render_interval', 0.5),
+                step=0.1,
+                help="Minimum time between visual updates, regardless of simulation speed"
+            )
+            
+            # Update simulator settings if it exists
+            if 'simulator' in st.session_state:
+                st.session_state.simulator.render_frequency = st.session_state.render_frequency
+                st.session_state.simulator.render_interval = st.session_state.render_interval
     
     return viz_container, stats_container
 
@@ -1483,7 +1561,11 @@ def _initialize_session_state():
         'last_visual_refresh': 0,  # Track last visual refresh time
         'last_viz_mode': '3d',  # Track mode changes
         'display_container': None,  # Container for stable display
-        'viz_error_count': 0  # Track visualization errors for resilience
+        'viz_error_count': 0,  # Track visualization errors for resilience
+        'last_render_time': time.time(),
+        'buffered_rendering': True,  # Enable buffered rendering by default
+        'render_interval': 0.5,  # Seconds between visual updates
+        'render_frequency': 5,  # Steps between renders
     }
     
     for key, value in initial_states.items():
@@ -1688,20 +1770,31 @@ if st.session_state.simulation_running:
     current_time = time.time()
     display_elapsed = current_time - st.session_state.get('last_display_update', 0)
     
-    # Only update the display at the specified interval
-    if display_elapsed > st.session_state.display_update_interval:
+    # Only update the display when:
+    # 1. The minimum display interval has passed AND
+    # 2. Either buffered rendering is off OR the simulator indicates rendering is needed
+    should_update = display_elapsed > st.session_state.display_update_interval and (
+        not st.session_state.get('buffered_rendering', True) or 
+        st.session_state.simulator.needs_render()
+    )
+    
+    if should_update:
         st.session_state.frame_count += 1
         st.session_state.last_display_update = current_time
         
-        # Check when was the last time we refreshed visuals
+        # If using buffered rendering, mark as rendered
+        if st.session_state.get('buffered_rendering', True):
+            st.session_state.simulator.mark_rendered()
+        
+        # Check for periodic visual refresh
         visual_refresh_elapsed = current_time - st.session_state.get('last_visual_refresh', 0)
         visual_refresh_interval = st.session_state.get('refresh_rate', 5) * st.session_state.display_update_interval
         
-        # Force visual refresh periodically or when changing tabs
         if visual_refresh_elapsed >= visual_refresh_interval:
             st.session_state.force_refresh = True
+            st.session_state.last_visual_refresh = current_time
         
-        # Always update display
+        # Update display
         try:
             update_display()
         except Exception as e:
@@ -1714,6 +1807,10 @@ if st.session_state.simulation_running:
         
         # Use rerun with a small delay to prevent flickering
         time.sleep(0.15)
+        st.rerun()
+    else:
+        # If not time to update yet, just rerun with a longer delay
+        time.sleep(0.2)
         st.rerun()
 else:
     # When paused, refresh visuals and update display
