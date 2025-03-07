@@ -1608,4 +1608,3 @@ def create_requirements_file():
     ]
     with open("requirements.txt", "w") as f:
         f.write("\n".join(requirements))
-```
