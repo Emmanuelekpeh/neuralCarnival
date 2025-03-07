@@ -743,11 +743,11 @@ class NeuralNetwork:
         return self._visualize_2d()
 
     def _visualize_3d(self):
-        """Create 3D visualization of the network with tendrils."""
+        """Create 3D visualization of the network with enhanced tendrils."""
         fig = go.Figure()
         pos = self.calculate_3d_layout()
 
-        # Create traces for edges with higher brightness
+        # Create traces for regular connections
         edge_traces = []
         for edge in self.graph.edges(data=True):
             u, v, data = edge
@@ -759,11 +759,11 @@ class NeuralNetwork:
                     y=[y0, y1, None],
                     z=[z0, z1, None],
                     mode='lines',
-                    line=dict(color='rgba(150,150,150,0.5)', width=1.5),  # Brighter and thicker
+                    line=dict(color='rgba(150,150,150,0.5)', width=1.5),
                     hoverinfo='none'
                 ))
 
-        # Create traces for tendrils (signal attempts) - FIXED
+        # Create enhanced traces for tendrils with more visibility and effects
         for node in self.nodes:
             if node.visible and hasattr(node, 'signal_tendrils'):
                 for tendril in node.signal_tendrils:
@@ -774,16 +774,15 @@ class NeuralNetwork:
                         
                         # Create dynamic, curved line for tendril
                         progress = tendril['progress']
-                        points = 10
+                        points = 15  # More points for smoother curves
                         x_vals = []
                         y_vals = []
                         z_vals = []
                         
-                        # Base curve parameters with randomized curve
-                        curve_height = 1.0 + random.random() * 0.5
-                        # Add some randomness to make tendrils more visually interesting
-                        mid_x = x0 + (x1 - x0) * 0.5 + random.uniform(-0.5, 0.5)
-                        mid_y = y0 + (y1 - y0) * 0.5 + random.uniform(-0.5, 0.5)
+                        # Enhanced curve parameters with improved aesthetics
+                        curve_height = 1.0 + random.random() * 1.0  # More height variation
+                        mid_x = x0 + (x1 - x0) * 0.5 + random.uniform(-0.8, 0.8)
+                        mid_y = y0 + (y1 - y0) * 0.5 + random.uniform(-0.8, 0.8)
                         mid_z = z0 + (z1 - z0) * 0.5 + curve_height
                         
                         # Generate points along the curve up to current progress
@@ -797,15 +796,20 @@ class NeuralNetwork:
                             y_vals.append(y)
                             z_vals.append(z)
                         
-                        # Create color based on tendril properties with more dynamic appearance
-                        alpha = 0.7 if tendril['progress'] < 0.5 else max(0.1, 0.8 - tendril['progress'] * 0.5)
-                        if tendril['success']:
-                            color = f'rgba(255,100,100,{alpha})'  # Red for successful connections
+                        # Create more vibrant colors based on tendril properties
+                        age_factor = min(1.0, tendril.get('progress', 0) * 2)
+                        if tendril.get('success', False):
+                            r, g, b = 255, 50 + int(100 * age_factor), 50
                         else:
-                            color = f'rgba(100,100,255,{alpha})'  # Blue for exploration attempts
+                            r, g, b = 50 + int(150 * age_factor), 50 + int(150 * age_factor), 255
                         
-                        # Add pulsating effect based on progress
-                        width = 2 + tendril['strength'] + math.sin(tendril['progress'] * math.pi) * 0.5
+                        alpha = 0.85 if tendril['progress'] < 0.6 else max(0.2, 0.9 - tendril['progress'] * 0.7)
+                        color = f'rgba({r},{g},{b},{alpha})'
+                        
+                        # Dynamic width based on progress
+                        base_width = 2.5 + tendril.get('strength', 1.0) * 0.5
+                        pulse = math.sin(tendril.get('progress', 0) * math.pi * 2) * 0.5 + 0.5
+                        width = base_width * (1 + pulse * 0.5)
                         
                         edge_traces.append(go.Scatter3d(
                             x=x_vals,
@@ -820,7 +824,7 @@ class NeuralNetwork:
                             showlegend=False
                         ))
 
-        # Create traces for nodes with higher opacity
+        # Create traces for nodes (unchanged)
         nodes_by_type = {}
         for node in self.nodes:
             if node.visible and node.id in pos:
@@ -1155,6 +1159,9 @@ class NetworkSimulator:
         }
         self.render_frequency = 5  # Only render every X simulation steps
         self.render_interval = 0.5  # Minimum seconds between renders
+        
+        # Add the renderer
+        self.renderer = BackgroundRenderer(self)
     
     def start(self, steps_per_second=1.0):
         """Start the simulation in a separate thread."""
@@ -1165,6 +1172,9 @@ class NetworkSimulator:
         self.thread = threading.Thread(target=self._run_simulation)
         self.thread.daemon = True
         self.thread.start()
+        
+        # Start the background renderer
+        self.renderer.start()
 
     def stop(self):
         """Stop the simulation thread."""
@@ -1172,6 +1182,9 @@ class NetworkSimulator:
         if self.thread:
             self.thread.join(timeout=1.0)
             self.thread = None
+        
+        # Stop renderer
+        self.renderer.stop()
 
     def _run_simulation(self):
         """Main simulation loop with buffered visualization."""
@@ -1212,6 +1225,10 @@ class NetworkSimulator:
                             'connections': total_connections,
                             'steps': self.network.simulation_steps
                         }
+                        
+                        # Request background render without waiting
+                        self.renderer.request_render(mode=st.session_state.viz_mode)
+                        self.visualization_buffer['steps_since_render'] = 0
                         
                 self.last_step = current_time
             time.sleep(0.001)  # Prevent busy waiting
@@ -1307,7 +1324,344 @@ def parse_contents(contents, filename):
         st.error(f"Error loading file: {str(e)}")
     return None
 
-# ...existing code...
+# Add an advanced rendering manager class
+class BackgroundRenderer:
+    """Handle rendering network visualizations in the background."""
+    def __init__(self, simulator):
+        self.simulator = simulator
+        self.visualization_queue = queue.Queue()
+        self.ready_figures = {}
+        self.running = False
+        self.thread = None
+        self.last_render_time = time.time()
+        self.lock = threading.Lock()
+        self.rendering_in_progress = False
+        self.tendril_visibility = True
+        self.tendril_duration = 20
+    
+    def start(self):
+        """Start the background rendering thread."""
+        if self.running:
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._render_loop)
+        self.thread.daemon = True
+        self.thread.start()
+    
+    def stop(self):
+        """Stop the background rendering thread."""
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1.0)
+            self.thread = None
+    
+    def request_render(self, render_type='all', mode='3d', force=False):
+        """Request a specific visualization to be rendered."""
+        if self.rendering_in_progress and not force:
+            return False
+        
+        self.visualization_queue.put({
+            'type': render_type,
+            'mode': mode,
+            'force': force,
+            'timestamp': time.time()
+        })
+        return True
+    
+    def get_figure(self, figure_type):
+        """Get a rendered figure if available."""
+        with self.lock:
+            return self.ready_figures.get(figure_type)
+    
+    def _render_loop(self):
+        """Main rendering loop that runs in background."""
+        while self.running:
+            try:
+                # Check if there's a rendering request
+                try:
+                    request = self.visualization_queue.get(block=True, timeout=0.5)
+                except queue.Empty:
+                    continue
+                
+                # Set flag to indicate rendering is in progress
+                self.rendering_in_progress = True
+                
+                # Apply template based on dark mode
+                template = "plotly_dark" if st.session_state.get('use_dark_mode', False) else "plotly_white"
+                
+                # Get figures based on request type
+                if request['type'] == 'all' or request['type'] == 'network':
+                    try:
+                        network_fig = self.simulator.network.visualize(mode=request['mode']) 
+                        network_fig.update_layout(template=template)
+                        with self.lock:
+                            self.ready_figures['network'] = network_fig
+                    except Exception as e:
+                        print(f"Error rendering network: {e}")
+                
+                if request['type'] == 'all' or request['type'] == 'activity':
+                    try:
+                        activity_fig = self.simulator.network.get_activity_heatmap()
+                        activity_fig.update_layout(template=template)
+                        with self.lock:
+                            self.ready_figures['activity'] = activity_fig
+                    except Exception as e:
+                        print(f"Error rendering activity: {e}")
+                
+                if request['type'] == 'all' or request['type'] == 'stats':
+                    try:
+                        stats_fig = self.simulator.network.get_stats_figure()
+                        if stats_fig:
+                            stats_fig.update_layout(template=template)
+                            with self.lock:
+                                self.ready_figures['stats'] = stats_fig
+                    except Exception as e:
+                        print(f"Error rendering stats: {e}")
+                
+                if request['type'] == 'all' or request['type'] == 'patterns':
+                    try:
+                        pattern_fig = self.simulator.network.visualize_firing_patterns()
+                        pattern_fig.update_layout(template=template)
+                        with self.lock:
+                            self.ready_figures['patterns'] = pattern_fig
+                    except Exception as e:
+                        print(f"Error rendering patterns: {e}")
+                
+                if request['type'] == 'all' or request['type'] == 'strength':
+                    try:
+                        strength_fig = self.simulator.network.get_connection_strength_visualization()
+                        strength_fig.update_layout(template=template)
+                        with self.lock:
+                            self.ready_figures['strength'] = strength_fig
+                    except Exception as e:
+                        print(f"Error rendering connection strength: {e}")
+                
+                # Record the last successful render time
+                self.last_render_time = time.time()
+                
+                # Clear rendering in progress flag
+                self.rendering_in_progress = False
+                
+            except Exception as e:
+                print(f"Error in rendering thread: {e}")
+                self.rendering_in_progress = False
+                time.sleep(0.5)  # Delay to prevent high CPU on errors
+    
+    def is_render_complete(self):
+        """Check if all figures are rendered and ready."""
+        required_figures = ['network', 'activity', 'stats', 'patterns', 'strength']
+        with self.lock:
+            return all(fig_type in self.ready_figures for fig_type in required_figures)
+    
+    def set_tendril_options(self, visible=True, duration=20):
+        """Update tendril visibility options."""
+        self.tendril_visibility = visible
+        self.tendril_duration = duration
+        # Update all nodes with new tendril settings
+        for node in self.simulator.network.nodes:
+            if hasattr(node, 'signal_tendrils'):
+                # Adjust existing tendrils duration
+                for tendril in node.signal_tendrils:
+                    tendril['duration'] = self.tendril_duration
+
+# Update the Node class fire method to better handle tendrils
+class Node:
+    # ...existing code...
+    
+    def fire(self, network):
+        """Attempt to fire and connect to other nodes with behavior based on node type."""
+        # Initialize counters if needed
+        if not hasattr(self, 'cycle_counter'):
+            self.cycle_counter = 0
+        if not hasattr(self, 'last_targets'):
+            self.last_targets = set()
+        # Apply firing rate modulation
+        base_rate = sum(self.properties['firing_rate']) / 2
+        cycle_factor = math.sin(time.time() / 60.0) * 0.1  # 60-second cycle
+        self.firing_rate = base_rate + cycle_factor
+        self.energy -= 5 + random.random() * 5
+        # Handle energy and burst mode
+        if self.energy < 10:
+            return  # Not enough energy
+        
+        if random.random() > self.firing_rate:
+            return
+        
+        self.last_fired = 0
+        self.activated = True
+        self.activation_level = 1.0
+        
+        # Create multiple exploration tendrils
+        num_tendrils = random.randint(1, 3)
+        for _ in range(num_tendrils):
+            # Choose random targets for each tendril
+            potential_targets = [n for n in network.nodes if n.visible and n.id != self.id]
+            if not potential_targets:
+                continue
+            
+            target = random.choice(potential_targets)
+            
+            # Create a tendril (visual signal but doesn't necessarily form connection)
+            tendril = {
+                'target_id': target.id,
+                'strength': 1.0 + random.random() * 0.5,  # Randomize strength for visual diversity
+                'progress': 0.0,
+                'duration': network.renderer.tendril_duration if hasattr(network, 'renderer') else 20,
+                'channel': self.channel,
+                'success': random.random() < 0.4,  # Increased success rate for better visibility
+                'created_at': time.time()  # Track creation time for effects
+            }
+            self.signal_tendrils.append(tendril)
+            
+            # Only count connection attempt for real connection attempts
+            if tendril['success']:
+                self.connection_attempts += 1
+                self.connect(target)
+                # Update node memory
+                self.memory = max(self.memory, self.size)
+                self.last_targets.add(target.id)
+                if len(self.last_targets) > 10:
+                    self.last_targets.pop()
+
+# Update the main UI to use the background renderer
+def update_display():
+    """Update the visualization using pre-rendered figures from background renderer."""
+    _ensure_node_signals()
+    
+    # Add welcome message and instructions
+    if st.session_state.frame_count == 0:
+        st.markdown("""
+        # Neural Network Simulation
+        
+        This simulation shows how neural networks evolve and grow organically.
+        
+        **Instructions:**
+        1. Click **▶️ Start** to begin the simulation
+        2. Observe how nodes automatically appear and form connections
+        3. Use the sidebar to adjust simulation parameters
+        4. Switch between 3D and 2D visualization modes
+        """)
+    
+    # Get pre-rendered figures from renderer
+    renderer = st.session_state.simulator.renderer
+    network_fig = renderer.get_figure('network')
+    activity_fig = renderer.get_figure('activity')
+    stats_fig = renderer.get_figure('stats')
+    pattern_fig = renderer.get_figure('patterns') 
+    strength_fig = renderer.get_figure('strength')
+    
+    # Request initial render if figures aren't available
+    if not network_fig or not activity_fig:
+        renderer.request_render(mode=st.session_state.viz_mode, force=True)
+    
+    # Update network summary on every frame (lightweight)
+    st.session_state.network_summary = st.session_state.simulator.network.get_network_summary()
+    
+    # Remember which tab was active
+    if 'active_tab' not in st.session_state:
+        st.session_state.active_tab = 0
+    
+    # Create tabs
+    tab_names = ["Network View", "Analysis", "Help"]
+    tabs = st.tabs(tab_names)
+    active_tab = st.session_state.active_tab
+    
+    # Show content based on active tab
+    with tabs[0]:
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.header("Neural Network")
+            # Use a container to help stabilize the visualization
+            with st.container():
+                if network_fig:
+                    st.plotly_chart(network_fig, use_container_width=True, key="network_viz")
+                else:
+                    st.info("Preparing network visualization...")
+        
+        with col2:
+            st.header("Activity Heatmap")
+            with st.container():
+                if activity_fig:
+                    st.plotly_chart(activity_fig, use_container_width=True, key="activity_viz")
+                else:
+                    st.info("Preparing activity heatmap...")
+
+        # Display current network status
+        summary = st.session_state.network_summary
+        st.markdown(f"""
+        **Network Status**: {summary['visible_nodes']} active nodes of {summary['total_nodes']} total  
+        **Connections**: {summary['total_connections']} ({summary['avg_connections']} avg per node)  
+        **Runtime**: {summary['runtime']}
+        """)
+
+    with tabs[1]:
+        col1, col2 = st.columns(2)
+        with col1:
+            st.header("Network Statistics")
+            with st.container():
+                if stats_fig:
+                    st.plotly_chart(stats_fig, use_container_width=True, key="stats_viz")
+                else:
+                    st.info("Preparing statistics...")
+        
+        with col2:
+            st.header("Firing Patterns")
+            with st.container():
+                if pattern_fig:
+                    st.plotly_chart(pattern_fig, use_container_width=True, key="pattern_viz")
+                else:
+                    st.info("Analyzing patterns...")
+            
+            st.header("Connection Strength")
+            with st.container():
+                if strength_fig:
+                    st.plotly_chart(strength_fig, use_container_width=True, key="strength_viz")
+                else:
+                    st.info("Analyzing connections...")
+
+    with tabs[2]:
+        # Help tab content (unchanged)
+        st.markdown("""
+        ## How It Works
+        
+        This simulation models a dynamic neural network with different node types:
+        
+        - **Explorer**: Creates random connections
+        - **Connector**: Links highly-connected nodes
+        - **Memory**: Maintains stable connections
+        - **Catalyst**: Accelerates nearby activity
+        - **Oscillator**: Creates rhythmic activations
+        - And many more...
+        
+        Nodes form connections, transmit signals, and can die or resurrect based on their energy levels.
+        
+        ## Auto-generation of Nodes
+        
+        By default, new nodes are automatically added over time based on the node generation rate.
+        New nodes are more likely to be of types that have been successful in forming connections.
+        
+        ## Troubleshooting
+        
+        **Visualization lagging?**
+        - Increase the display update interval
+        - Switch to 2D mode
+        - Reduce the maximum number of nodes
+        
+        **Want more connections?**
+        - Increase the learning rate
+        - Increase the simulation speed
+        """)
+
+    # Track tab changes using session state
+    for i, tab_name in enumerate(tab_names):
+        if tabs[i].selectbox(f"Select {tab_name}", [tab_name], key=f"tab_select_{i}", label_visibility="collapsed") == tab_name:
+            if st.session_state.active_tab != i:
+                st.session_state.active_tab = i
+                # Request render for the newly selected tab
+                if i == 0:
+                    renderer.request_render(render_type='network', mode=st.session_state.viz_mode)
+                elif i == 1:
+                    renderer.request_render(render_type='stats', mode=st.session_state.viz_mode)
 
 def create_ui():
     """Create the main Streamlit UI."""
@@ -1449,22 +1803,34 @@ def create_ui():
                     st.success(f"Loaded network from {selected_file}")
         
         # Add an option to control tendril visualization
-        st.markdown("## Visual Effects")
+        st.markdown("## Tendril Visualization")
         st.markdown("---")
         
-        st.session_state.show_tendrils = st.checkbox(
-            "Show Connection Tendrils", 
+        show_tendrils = st.checkbox(
+            "Show Node Connections", 
             value=st.session_state.get('show_tendrils', True),
             help="Show the tendrils fired by nodes when attempting connections"
         )
         
-        st.session_state.tendril_persistence = st.slider(
+        tendril_duration = st.slider(
             "Tendril Duration", 
-            min_value=5, 
-            max_value=50, 
-            value=st.session_state.get('tendril_persistence', 20),
-            help="How many simulation steps tendrils remain visible"
+            min_value=10, 
+            max_value=100, 
+            value=st.session_state.get('tendril_duration', 30),  # Increased default duration
+            step=5,
+            help="How long tendrils remain visible for better visualization"
         )
+        
+        # Update renderer settings
+        if 'simulator' in st.session_state and hasattr(st.session_state.simulator, 'renderer'):
+            st.session_state.simulator.renderer.set_tendril_options(
+                visible=show_tendrils, 
+                duration=tendril_duration
+            )
+        
+        # Save updated values in session state
+        st.session_state.show_tendrils = show_tendrils
+        st.session_state.tendril_duration = tendril_duration
         
         # Add theme settings
         st.markdown("## Theme Settings")
@@ -1592,162 +1958,35 @@ def _ensure_node_signals():
         if not hasattr(node, 'activated'):
             node.activated = False
 
-def update_display():
-    """Update the visualization with unique keys for each Plotly chart."""
-    _ensure_node_signals()
+# Main simulation loop with optimized display updates
+if st.session_state.simulation_running:
+    current_time = time.time()
+    display_elapsed = current_time - st.session_state.get('last_display_update', 0)
     
-    # Add welcome message and instructions
-    if st.session_state.frame_count == 0:
-        st.markdown("""
-        # Neural Network Simulation
+    # Only update the display at the specified interval
+    # Note: Rendering happens in background now, so this is just for UI updates
+    if display_elapsed > st.session_state.display_update_interval:
+        st.session_state.frame_count += 1
+        st.session_state.last_display_update = current_time
         
-        This simulation shows how neural networks evolve and grow organically.
+        # Always update the display with whatever rendered figures are available
+        try:
+            update_display()
+        except Exception as e:
+            st.error(f"Error updating display: {str(e)[:100]}...")
         
-        **Instructions:**
-        1. Click **▶️ Start** to begin the simulation
-        2. Observe how nodes automatically appear and form connections
-        3. Use the sidebar to adjust simulation parameters
-        4. Switch between 3D and 2D visualization modes
-        """)
-    
-    # Always create visualizations if they don't exist yet, regardless of force_refresh
-    needs_creation = 'network_fig' not in st.session_state or st.session_state.get('force_refresh', False)
-    
-    # Also check if we need to recreate based on mode change
-    mode_changed = st.session_state.get('last_viz_mode', '3d') != st.session_state.viz_mode
-    if mode_changed:
-        needs_creation = True
-        st.session_state.last_viz_mode = st.session_state.viz_mode
-    
-    if needs_creation:
-        with st.spinner("Generating visualizations..."):
-            # Apply dark/light theme preference to visualizations
-            dark_mode = st.session_state.get('use_dark_mode', False)
-            template = "plotly_dark" if dark_mode else "plotly_white"
-            
-            try:
-                # Always generate all visualizations and keep them in session state
-                st.session_state.network_fig = st.session_state.simulator.network.visualize(mode=st.session_state.viz_mode)
-                st.session_state.network_fig.update_layout(template=template)
-                
-                st.session_state.activity_fig = st.session_state.simulator.network.get_activity_heatmap()
-                st.session_state.activity_fig.update_layout(template=template)
-                
-                st.session_state.stats_fig = st.session_state.simulator.network.get_stats_figure()
-                if st.session_state.stats_fig:
-                    st.session_state.stats_fig.update_layout(template=template)
-                
-                st.session_state.pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
-                st.session_state.pattern_fig.update_layout(template=template)
-                
-                st.session_state.strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
-                st.session_state.strength_fig.update_layout(template=template)
-                
-                # Reset force refresh flag
-                st.session_state.force_refresh = False
-                st.session_state.last_visual_refresh = time.time()
-            except Exception as e:
-                # Log errors but don't crash
-                print(f"Error generating visualizations: {e}")
-    
-    # Update network summary on every frame (lightweight)
-    st.session_state.network_summary = st.session_state.simulator.network.get_network_summary()
-    
-    # Remember which tab was active
-    if 'active_tab' not in st.session_state:
-        st.session_state.active_tab = 0
-    
-    # Create tabs
-    tab_names = ["Network View", "Analysis", "Help"]
-    tabs = st.tabs(tab_names)
-    active_tab = st.session_state.active_tab
-    
-    # Safety check to ensure all visualization objects exist
-    def ensure_visualization_exists():
-        """Make sure all visualization objects exist to avoid errors."""
-        if 'network_fig' not in st.session_state:
-            st.session_state.force_refresh = True
-            return False
-        return True
-    
-    # Show content based on active tab
-    if ensure_visualization_exists():
-        with tabs[0]:
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.header("Neural Network")
-                # Use a container to help stabilize the visualization
-                with st.container():
-                    st.plotly_chart(st.session_state.network_fig, use_container_width=True, key="network_viz")
-            
-            with col2:
-                st.header("Activity Heatmap")
-                with st.container():
-                    st.plotly_chart(st.session_state.activity_fig, use_container_width=True, key="activity_viz")
-
-            # Network summary
-            summary = st.session_state.network_summary
-            st.markdown(f"""
-            **Network Status**: {summary['visible_nodes']} active nodes of {summary['total_nodes']} total  
-            **Connections**: {summary['total_connections']} ({summary['avg_connections']} avg per node)  
-            **Runtime**: {summary['runtime']}
-            """)
-
-        with tabs[1]:
-            col1, col2 = st.columns(2)
-            with col1:
-                st.header("Network Statistics")
-                if 'stats_fig' in st.session_state and st.session_state.stats_fig:
-                    with st.container():
-                        st.plotly_chart(st.session_state.stats_fig, use_container_width=True, key="stats_viz")
-            
-            with col2:
-                st.header("Firing Patterns")
-                with st.container():
-                    st.plotly_chart(st.session_state.pattern_fig, use_container_width=True, key="pattern_viz")
-                
-                st.header("Connection Strength")
-                with st.container():
-                    st.plotly_chart(st.session_state.strength_fig, use_container_width=True, key="strength_viz")
-
-        with tabs[2]:
-            # Help tab content (unchanged)
-            st.markdown("""
-            ## How It Works
-            
-            This simulation models a dynamic neural network with different node types:
-            
-            - **Explorer**: Creates random connections
-            - **Connector**: Links highly-connected nodes
-            - **Memory**: Maintains stable connections
-            - **Catalyst**: Accelerates nearby activity
-            - **Oscillator**: Creates rhythmic activations
-            - And many more...
-            
-            Nodes form connections, transmit signals, and can die or resurrect based on their energy levels.
-            
-            ## Auto-generation of Nodes
-            
-            By default, new nodes are automatically added over time based on the node generation rate.
-            New nodes are more likely to be of types that have been successful in forming connections.
-            
-            ## Troubleshooting
-            
-            **Visualization lagging?**
-            - Increase the display update interval
-            - Switch to 2D mode
-            - Reduce the maximum number of nodes
-            
-            **Want more connections?**
-            - Increase the learning rate
-            - Increase the simulation speed
-            """)
-
-    # Track tab changes using session state
-    for i, tab_name in enumerate(tab_names):
-        if tabs[i].selectbox(f"Select {tab_name}", [tab_name], key=f"tab_select_{i}", label_visibility="collapsed") == tab_name:
-            if st.session_state.active_tab != i:
-                st.session_state.active_tab = i
+        # Rerun with a small delay to control refresh rate
+        time.sleep(max(0.1, st.session_state.display_update_interval / 2))
+        st.rerun()
+    else:
+        # Just wait a bit before checking again
+        time.sleep(0.1)
+        st.rerun()
+else:
+    # When paused, ensure a render is requested and display what's available
+    if 'simulator' in st.session_state and hasattr(st.session_state.simulator, 'renderer'):
+        st.session_state.simulator.renderer.request_render(mode=st.session_state.viz_mode)
+    update_display()
 
 # Initialize the app
 st.set_page_config(page_title="Neural Network Simulation", layout="wide")
@@ -1764,59 +2003,6 @@ _initialize_session_state()
 
 # Create display containers
 viz_container, stats_container = create_ui()
-
-# Main simulation loop with optimized display updates
-if st.session_state.simulation_running:
-    current_time = time.time()
-    display_elapsed = current_time - st.session_state.get('last_display_update', 0)
-    
-    # Only update the display when:
-    # 1. The minimum display interval has passed AND
-    # 2. Either buffered rendering is off OR the simulator indicates rendering is needed
-    should_update = display_elapsed > st.session_state.display_update_interval and (
-        not st.session_state.get('buffered_rendering', True) or 
-        st.session_state.simulator.needs_render()
-    )
-    
-    if should_update:
-        st.session_state.frame_count += 1
-        st.session_state.last_display_update = current_time
-        
-        # If using buffered rendering, mark as rendered
-        if st.session_state.get('buffered_rendering', True):
-            st.session_state.simulator.mark_rendered()
-        
-        # Check for periodic visual refresh
-        visual_refresh_elapsed = current_time - st.session_state.get('last_visual_refresh', 0)
-        visual_refresh_interval = st.session_state.get('refresh_rate', 5) * st.session_state.display_update_interval
-        
-        if visual_refresh_elapsed >= visual_refresh_interval:
-            st.session_state.force_refresh = True
-            st.session_state.last_visual_refresh = current_time
-        
-        # Update display
-        try:
-            update_display()
-        except Exception as e:
-            # Add resilience against rendering errors
-            st.error(f"Display error: {str(e)[:100]}... Click 'Refresh Visuals' in sidebar.")
-            st.session_state.viz_error_count += 1
-            if st.session_state.viz_error_count > 5:
-                st.session_state.force_refresh = True
-                st.session_state.viz_error_count = 0
-        
-        # Use rerun with a small delay to prevent flickering
-        time.sleep(0.15)
-        st.rerun()
-    else:
-        # If not time to update yet, just rerun with a longer delay
-        time.sleep(0.2)
-        st.rerun()
-else:
-    # When paused, refresh visuals and update display
-    if 'network_fig' not in st.session_state:
-        st.session_state.force_refresh = True
-    update_display()
 
 # Create requirements file if needed
 if not os.path.exists("requirements.txt"):
