@@ -1422,6 +1422,10 @@ def create_ui():
         use_dark_mode = st.checkbox("Use Dark Mode", value=False, 
                                   help="Toggle between light and dark theme for visualizations")
         st.session_state.use_dark_mode = use_dark_mode
+        
+        # Add refresh button to force visualization update
+        if st.button("🔄 Refresh Visuals", help="Force refresh all visualizations"):
+            st.session_state.force_refresh = True
     
     return viz_container, stats_container
 
@@ -1464,7 +1468,9 @@ def _initialize_session_state():
         'tendril_persistence': 20,
         'refresh_rate': 5,  # Only refresh visualizations every 5 frames
         'cached_frame': -1,  # Track the last frame when visuals were refreshed
-        'use_dark_mode': False  # Default to light mode
+        'use_dark_mode': False,  # Default to light mode
+        'force_refresh': False,  # Add flag for manual refresh
+        'last_visual_refresh': 0  # Track last visual refresh time
     }
     
     for key, value in initial_states.items():
@@ -1509,46 +1515,45 @@ def update_display():
         4. Switch between 3D and 2D visualization modes
         """)
     
-    # Cache visualization objects in session state to reduce flickering
-    if 'cached_frame' not in st.session_state:
-        st.session_state.cached_frame = -1
-    
-    # Only regenerate visualizations when necessary (based on a refresh rate)
-    should_refresh = (st.session_state.frame_count - st.session_state.cached_frame) >= st.session_state.get('refresh_rate', 5)
-    
-    if should_refresh or not st.session_state.simulation_running:
-        # Cache current frame number
-        st.session_state.cached_frame = st.session_state.frame_count
-        
+    # Create all visualizations on first run even if they're not shown
+    if 'network_fig' not in st.session_state or st.session_state.get('force_refresh', False):
         # Apply dark/light theme preference to visualizations
         dark_mode = st.session_state.get('use_dark_mode', False)
         template = "plotly_dark" if dark_mode else "plotly_white"
         
-        # Generate all visualizations once and store in session state
+        # Always generate all visualizations and keep them in session state
         st.session_state.network_fig = st.session_state.simulator.network.visualize(mode=st.session_state.viz_mode)
-        st.session_state.activity_fig = st.session_state.simulator.network.get_activity_heatmap()
-        
-        # Update figure templates based on dark mode setting
         st.session_state.network_fig.update_layout(template=template)
+        
+        st.session_state.activity_fig = st.session_state.simulator.network.get_activity_heatmap()
         st.session_state.activity_fig.update_layout(template=template)
         
         st.session_state.stats_fig = st.session_state.simulator.network.get_stats_figure()
         if st.session_state.stats_fig:
             st.session_state.stats_fig.update_layout(template=template)
-            
+        
         st.session_state.pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
         st.session_state.pattern_fig.update_layout(template=template)
         
         st.session_state.strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
         st.session_state.strength_fig.update_layout(template=template)
         
-        st.session_state.network_summary = st.session_state.simulator.network.get_network_summary()
+        # Reset force refresh flag
+        st.session_state.force_refresh = False
+    
+    # Update network summary on every frame (lightweight)
+    st.session_state.network_summary = st.session_state.simulator.network.get_network_summary()
+    
+    # Remember which tab was active
+    if 'active_tab' not in st.session_state:
+        st.session_state.active_tab = 0
     
     # Create tabs
     tab_names = ["Network View", "Analysis", "Help"]
     tabs = st.tabs(tab_names)
+    active_tab = st.session_state.active_tab
     
-    # Tab content - use cached visualizations to prevent recalculation
+    # Show content based on active tab
     with tabs[0]:
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -1571,7 +1576,7 @@ def update_display():
         col1, col2 = st.columns(2)
         with col1:
             st.header("Network Statistics")
-            if st.session_state.stats_fig:
+            if 'stats_fig' in st.session_state and st.session_state.stats_fig:
                 st.plotly_chart(st.session_state.stats_fig, use_container_width=True, key="stats_viz")
         
         with col2:
@@ -1614,11 +1619,11 @@ def update_display():
         - Increase the simulation speed
         """)
 
-    # Update the active tab based on user interaction
-    # (This is a workaround since Streamlit doesn't provide a direct way to track active tab)
+    # Track tab changes using session state
     for i, tab_name in enumerate(tab_names):
         if tabs[i].selectbox(f"Select {tab_name}", [tab_name], key=f"tab_select_{i}", label_visibility="collapsed") == tab_name:
-            st.session_state.active_tab = i
+            if st.session_state.active_tab != i:
+                st.session_state.active_tab = i
 
 # Initialize the app
 st.set_page_config(page_title="Neural Network Simulation", layout="wide")
@@ -1646,16 +1651,24 @@ if st.session_state.simulation_running:
         st.session_state.frame_count += 1
         st.session_state.last_display_update = current_time
         
-        # Check if simulation has run for at least 10 steps before visual refresh
-        # This helps reduce initial flickering while the network stabilizes
-        if st.session_state.frame_count > 10:
-            update_display()
-            
-        # Use rerun with a longer delay to reduce flicker
-        time.sleep(max(0.05, st.session_state.display_update_interval / 10))
+        # Check when was the last time we refreshed visuals
+        visual_refresh_elapsed = current_time - st.session_state.get('last_visual_refresh', 0)
+        visual_refresh_interval = st.session_state.get('refresh_rate', 5) * st.session_state.display_update_interval
+        
+        # Force visual refresh periodically (not just when simulation pauses)
+        if visual_refresh_elapsed >= visual_refresh_interval:
+            st.session_state.force_refresh = True
+            st.session_state.last_visual_refresh = current_time
+        
+        # Always update display
+        update_display()
+        
+        # Use rerun with a minimal delay
+        time.sleep(0.1)
         st.rerun()
 else:
-    # When paused, just update the display once
+    # When paused, refresh visuals and update display
+    st.session_state.force_refresh = True
     update_display()
 
 # Create requirements file if needed
