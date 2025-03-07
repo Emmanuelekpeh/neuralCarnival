@@ -4,18 +4,18 @@ import pickle
 import time
 import threading
 import queue
+import streamlit as st
+
 # Import dependencies with error handling
 try:
     import numpy as np
 except ImportError:
-    import streamlit as st
     st.error("Missing dependency: numpy. Please install it with 'pip install numpy'")
     st.stop()
     
 try:
     import networkx as nx
 except ImportError:
-    import streamlit as st
     st.error("Missing dependency: networkx. Please install it with 'pip install networkx'")
     st.stop()
 
@@ -23,11 +23,9 @@ try:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 except ImportError:
-    import streamlit as st
     st.error("Missing dependency: plotly. Please install it with 'pip install plotly'")
     st.stop()
     
-import streamlit as st
 import base64
 from datetime import datetime
 
@@ -857,69 +855,130 @@ class NeuralNetwork:
 
     def save_state(self, filename=None):
         """Save the current network state to a file."""
-        directory = "network_saves"
-        if not os.path.exists(directory):
-            os.makedirs(directory, exist_ok=True)
+        try:
+            directory = "network_saves"
+            if not os.path.exists(directory):
+                os.makedirs(directory, exist_ok=True)
+                
+            if filename is None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{directory}/network_state_{timestamp}.pkl"
             
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{directory}/network_state_{timestamp}.pkl"
-
-        state = {
-            'nodes': self.nodes,
-            'simulation_steps': self.simulation_steps,
-            'stats': self.stats,
-            'start_time': self.start_time,
-            'max_nodes': self.max_nodes,
-            'learning_rate': self.learning_rate
-        }
-
-        with open(filename, 'wb') as f:
-            pickle.dump(state, f)
-
-        st.success(f"Network saved to {filename}")
-
-        stats_file = f"{directory}/stats_{timestamp}.csv"
-        with open(stats_file, 'w') as f:
-            f.write("Step,NodeCount,VisibleNodes,ConnectionCount,AvgSize")
-            for node_type in NODE_TYPES:
-                f.write(f",{node_type}")
-            f.write("\n")
-
-            for i in range(len(self.stats['node_count'])):
-                f.write(f"{i},{self.stats['node_count'][i]},"
-                       f"{self.stats['visible_nodes'][i]},"
-                       f"{self.stats['connection_count'][i]},"
-                       f"{self.stats['avg_size'][i]:.2f}")
-                       
+            # Convert to a more pickle-friendly format
+            serializable_state = {
+                'nodes_data': [self._node_to_dict(node) for node in self.nodes],
+                'simulation_steps': self.simulation_steps,
+                'stats': self.stats,
+                'start_time': self.start_time,
+                'max_nodes': self.max_nodes,
+                'learning_rate': self.learning_rate
+            }
+            
+            with open(filename, 'wb') as f:
+                pickle.dump(serializable_state, f)
+            
+            # Save stats to CSV
+            stats_file = f"{directory}/stats_{timestamp}.csv"
+            with open(stats_file, 'w') as f:
+                f.write("Step,NodeCount,VisibleNodes,ConnectionCount,AvgSize")
                 for node_type in NODE_TYPES:
-                    if i < len(self.stats['type_distribution'][node_type]):
-                        f.write(f",{self.stats['type_distribution'][node_type][i]}")
-                    else:
-                        f.write(",0")
-                        
+                    f.write(f",{node_type}")
                 f.write("\n")
-
-        return filename
+                
+                for i in range(len(self.stats['node_count'])):
+                    f.write(f"{i},{self.stats['node_count'][i]},"
+                           f"{self.stats['visible_nodes'][i]},"
+                           f"{self.stats['connection_count'][i]},"
+                           f"{self.stats['avg_size'][i]:.2f}")
+                           
+                    for node_type in NODE_TYPES:
+                        if i < len(self.stats['type_distribution'][node_type]):
+                            f.write(f",{self.stats['type_distribution'][node_type][i]}")
+                        else:
+                            f.write(",0")
+                            
+                    f.write("\n")
+            
+            st.success(f"Network saved to {filename}")
+            return filename
+        except Exception as e:
+            st.error(f"Error saving network: {str(e)}")
+            return None
+    
+    def _node_to_dict(self, node):
+        """Convert a node object to a serializable dictionary."""
+        return {
+            'id': node.id,
+            'type': node.type,
+            'connections': node.connections,
+            'size': node.size,
+            'firing_rate': node.firing_rate,
+            'visible': node.visible,
+            'memory': node.memory,
+            'age': node.age,
+            'last_fired': node.last_fired,
+            'max_connections': node.max_connections,
+            'connection_attempts': node.connection_attempts,
+            'successful_connections': node.successful_connections,
+            'position': node.position,
+            'velocity': node.velocity,
+            'cycle_counter': getattr(node, 'cycle_counter', 0),
+            'last_targets': list(getattr(node, 'last_targets', set()))
+        }
+    
+    def _dict_to_node(self, data):
+        """Convert a dictionary back to a node object."""
+        node = Node(data['id'], node_type=data['type'], visible=data['visible'], 
+                   max_connections=data['max_connections'])
+        
+        node.size = data['size']
+        node.firing_rate = data['firing_rate']
+        node.connections = data['connections']
+        node.memory = data['memory']
+        node.age = data['age']
+        node.last_fired = data['last_fired']
+        node.connection_attempts = data['connection_attempts']
+        node.successful_connections = data['successful_connections']
+        node.position = data['position']
+        node.velocity = data['velocity']
+        
+        # Handle optional attributes
+        node.cycle_counter = data.get('cycle_counter', 0)
+        node.last_targets = set(data.get('last_targets', []))
+        
+        return node
 
     @classmethod
     def load_state(cls, filename):
         """Load network state from a file."""
-        with open(filename, 'rb') as f:
-            state = pickle.load(f)
-
-        network = cls(max_nodes=state['max_nodes'])
-
-        network.nodes = state['nodes']
-        network.simulation_steps = state['simulation_steps']
-        network.stats = state['stats']
-        network.start_time = state['start_time']
-        network.learning_rate = state.get('learning_rate', 0.1)
-
-        network.update_graph()
-
-        print(f"Network loaded from {filename}")
-        return network
+        try:
+            with open(filename, 'rb') as f:
+                state = pickle.load(f)
+            
+            # Check if this is the new format or old format
+            if 'nodes_data' in state:
+                # New format
+                network = cls(max_nodes=state['max_nodes'])
+                network.nodes = [network._dict_to_node(node_data) for node_data in state['nodes_data']]
+                network.simulation_steps = state['simulation_steps']
+                network.stats = state['stats']
+                network.start_time = state['start_time']
+                network.learning_rate = state.get('learning_rate', 0.1)
+            else:
+                # Old format (for backwards compatibility)
+                network = cls(max_nodes=state['max_nodes'])
+                network.nodes = state['nodes']
+                network.simulation_steps = state['simulation_steps']
+                network.stats = state['stats']
+                network.start_time = state['start_time']
+                network.learning_rate = state.get('learning_rate', 0.1)
+            
+            network.update_graph()
+            st.success(f"Network loaded from {filename}")
+            return network
+        except Exception as e:
+            st.error(f"Error loading network: {str(e)}")
+            return cls()
 
 class NetworkSimulator:
     def __init__(self, network=None, max_nodes=200):
@@ -1145,17 +1204,18 @@ if saved_files:
 
 # Main display section - continuously updates
 def update_display():
+    """Update the visualization with unique keys for each Plotly chart."""
     # Main visualization
     with viz_container.container():
         st.header("Neural Network Visualization")
         fig = st.session_state.simulator.network.visualize(mode=viz_mode)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="network_viz")
 
     # Network statistics
     with stats_container.container():
         st.header("Network Statistics")
         stats_fig = st.session_state.simulator.network.get_stats_figure()
-        st.plotly_chart(stats_fig, use_container_width=True)
+        st.plotly_chart(stats_fig, use_container_width=True, key="stats_viz")
 
     # Network summary
     with summary_container.container():
@@ -1163,11 +1223,11 @@ def update_display():
         with col1:
             st.header("Network Summary")
             summary = st.session_state.simulator.network.get_network_summary()
-            st.json(summary)
+            st.json(summary, expanded=False)
         with col2:
             st.header("Simulation Status")
             active_nodes = len([n for n in st.session_state.simulator.network.nodes if n.visible])
-            st.metric("Active Nodes", active_nodes)
+            st.metric("Active Nodes", active_nodes, delta=None, help="Number of currently visible nodes")
             st.metric("Total Nodes", len(st.session_state.simulator.network.nodes))
             st.metric("Simulation Steps", st.session_state.simulator.network.simulation_steps)
             
@@ -1182,17 +1242,26 @@ refresh_placeholder = st.empty()
 
 # Auto-refresh mechanism for continuous updates
 if st.session_state.simulation_running:
-    auto_refresh = True
-else:
-    with refresh_placeholder.container():
-        auto_refresh = st.button("🔄 Refresh View")
-
-if auto_refresh:
-    # The refresh is handled via this loop and rerun
-    time.sleep(st.session_state.update_interval)
-    update_display()
-    st.session_state.frame_count += 1
+    # Add a frame rate counter in the corner
+    st.sidebar.markdown(f"**Frame: {st.session_state.frame_count}**")
+    
+    # Schedule the next update with a more efficient approach
+    current_time = time.time()
+    if current_time - st.session_state.last_update > st.session_state.update_interval:
+        # Update the display only when interval has passed
+        st.session_state.last_update = current_time
+        st.session_state.frame_count += 1
+    
+    # Always rerun when simulation is active, but with a small delay
+    # to prevent excessive CPU usage
+    time.sleep(0.05)
     st.experimental_rerun()
+else:
+    # When paused, provide a manual refresh option
+    with refresh_placeholder.container():
+        if st.button("🔄 Refresh View", key="manual_refresh"):
+            update_display()
+            st.session_state.frame_count += 1
 
 # Helper file creating function
 def create_requirements_file():
@@ -1203,5 +1272,6 @@ def create_requirements_file():
         f.write("plotly>=4.14.0\n")
         f.write("streamlit>=1.13.0\n")
 
-# Uncomment this to create requirements.txt when needed
-# create_requirements_file()
+# Automatically create requirements.txt if it doesn't exist
+if not os.path.exists("requirements.txt"):
+    create_requirements_file()
