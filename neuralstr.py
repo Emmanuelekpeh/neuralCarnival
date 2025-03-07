@@ -1181,9 +1181,33 @@ def parse_contents(contents, filename):
     """Parse uploaded file contents.""" 
     if contents is None:
         return None
+        
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
     try:
+        if filename.endswith('.pkl'):
+            return pickle.loads(decoded)
+        else:
+            st.error(f"Unsupported file type: {filename}")
+    except Exception as e:
+        st.error(f"Error loading file: {str(e)}")
+    return None
+
+class BackgroundRenderer:
+    def __init__(self, simulator):
+        self.simulator = simulator
+        self.visualization_queue = queue.Queue()
+        self.ready_figures = {}
+        self.running = False
+        self.thread = None
+        self.last_render_time = time.time()
+        self.lock = threading.Lock()
+        self.rendering_in_progress = False
+        self.tendril_visibility = True
+        self.tendril_duration = 30
+        self.last_error = None
+        self.error_count = 0
+        self._init_thread_safe_attrs()
     
     def start(self):
         """Start the background rendering thread.""" 
