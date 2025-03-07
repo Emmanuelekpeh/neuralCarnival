@@ -1,39 +1,28 @@
-import random
-import os
-import pickle
-import time
-import threading
-import queue
-import streamlit as st
-import math
-
-# Import dependencies with error handling
 try:
+    import streamlit as st
     import numpy as np
-except ImportError:
-    st.error("Missing dependency: numpy. Please install it with 'pip install numpy'")
-    st.stop()
-    
-try:
     import networkx as nx
-except ImportError:
-    st.error("Missing dependency: networkx. Please install it with 'pip install networkx'")
-    st.stop()
-
-try:
-    import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 except ImportError:
-    st.error("Missing dependency: plotly. Please install it with 'pip install plotly'")
+    st.error("Missing dependencies. Please install requirements.txt")
     st.stop()
-    
-import base64
-from datetime import datetime
 
-# Define different node types with behaviors
+import random
+import time
+import queue
+import os
+import base64
+import math
+import pickle
+import threading
+from collections import deque 
+from scipy.spatial import cKDTree
+from datetime import datetime
+import plotly.graph_objs as go
+
 NODE_TYPES = {
     'explorer': {
-        'color': '#FF5733',  # Orange-red
+        'color': '#FF5733',
         'size_range': (50, 200),
         'firing_rate': (0.2, 0.5),
         'decay_rate': (0.03, 0.08),
@@ -58,7 +47,7 @@ NODE_TYPES = {
     },
     'inhibitor': {
         'color': '#E74C3C',  # Red
-        'size_range': (30, 120),
+        'size_range': (30, 120), 
         'firing_rate': (0.05, 0.1),
         'decay_rate': (0.05, 0.1),
         'connection_strength': 0.8,
@@ -67,7 +56,7 @@ NODE_TYPES = {
     'catalyst': {
         'color': '#2ECC71',  # Green
         'size_range': (40, 150),
-        'firing_rate': (0.15, 0.4),
+        'firing_rate': (0.15, 0.4), 
         'decay_rate': (0.04, 0.09),
         'connection_strength': 1.8,
         'resurrection_chance': 0.18
@@ -78,7 +67,7 @@ NODE_TYPES = {
         'firing_rate': (0.3, 0.7),
         'decay_rate': (0.02, 0.06),
         'connection_strength': 1.4,
-        'resurrection_chance': 0.2,
+        'resurrection_chance': 0.2
     },
     'bridge': {
         'color': '#1ABC9C',  # Turquoise
@@ -86,7 +75,7 @@ NODE_TYPES = {
         'firing_rate': (0.1, 0.2),
         'decay_rate': (0.01, 0.04),
         'connection_strength': 1.7,
-        'resurrection_chance': 0.22,
+        'resurrection_chance': 0.22
     },
     'pruner': {
         'color': '#E74C3C',  # Crimson
@@ -94,7 +83,7 @@ NODE_TYPES = {
         'firing_rate': (0.15, 0.25),
         'decay_rate': (0.07, 0.12),
         'connection_strength': 0.6,
-        'resurrection_chance': 0.08,
+        'resurrection_chance': 0.08
     },
     'mimic': {
         'color': '#8E44AD',  # Purple
@@ -102,7 +91,7 @@ NODE_TYPES = {
         'firing_rate': (0.1, 0.4),
         'decay_rate': (0.02, 0.05),
         'connection_strength': 1.3,
-        'resurrection_chance': 0.17,
+        'resurrection_chance': 0.17
     },
     'attractor': {
         'color': '#2980B9',  # Royal Blue
@@ -110,7 +99,7 @@ NODE_TYPES = {
         'firing_rate': (0.05, 0.15),
         'decay_rate': (0.01, 0.03),
         'connection_strength': 2.5,
-        'resurrection_chance': 0.3,
+        'resurrection_chance': 0.3
     },
     'sentinel': {
         'color': '#27AE60',  # Emerald
@@ -118,7 +107,7 @@ NODE_TYPES = {
         'firing_rate': (0.2, 0.3),
         'decay_rate': (0.02, 0.04),
         'connection_strength': 1.0,
-        'resurrection_chance': 0.4,
+        'resurrection_chance': 0.4
     },
     'equalizer': {
         'color': '#ABABAB',  # Gray
@@ -149,8 +138,7 @@ NODE_TYPES = {
 class Node:
     def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
         if not node_type:
-            # Random node type with weighted probability
-            weights = [0.1] * 11  
+            weights = [0.1] * len(NODE_TYPES)  
             node_type = random.choices(list(NODE_TYPES.keys()), weights=weights)[0]
         
         self.id = node_id
@@ -178,480 +166,191 @@ class Node:
         self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
         
         # Add signal tracking for visualization
-        self.signals = []  # Stores active signals
-        self.activation_level = 0.0  # Current activation level (0.0-1.0)
-        self.activated = False  # Whether node is currently activated
+        self.signals = []  
+        self.activation_level = 0.0
+        self.activated = False
         
         # Add new properties for enhanced features
-        self.energy = 100.0  # Energy for firing
-        self.stored_signals = []  # For buffer/memory nodes
-        self.burst_mode = False  # For short bursts
+        self.energy = 100.0
+        self.stored_signals = []
+        self.burst_mode = False
         self.burst_counter = 0
         self.base_decay_rate = random.uniform(*self.properties['decay_rate'])
         self.adaptive_decay = self.base_decay_rate
-        self.channel = random.randint(1, 5)  # Communication channel (1-5)
+        self.channel = random.randint(1, 5)
         
+        # STDP fields & advanced node properties
+        self.spike_history = deque(maxlen=50)
+        self.last_spike_time = 0
+        self.genes = {
+            'learning_rate': random.uniform(0.05, 0.2),
+            'adaptation_rate': random.uniform(0.01, 0.1),
+            'plasticity': random.uniform(0.5, 1.5)
+        }
+
     def fire(self, network):
-        """Attempt to connect to other nodes with behavior based on node type."""
+        """Attempt to fire and connect to other nodes with behavior based on node type."""
+        # Initialize counters if needed
         if not hasattr(self, 'cycle_counter'):
             self.cycle_counter = 0
         if not hasattr(self, 'last_targets'):
             self.last_targets = set()
             
-        # Time-varying firing rate for all nodes
-        if hasattr(self, 'properties') and 'firing_rate' in self.properties:
-            base_rate = sum(self.properties['firing_rate']) / 2
-            cycle_factor = math.sin(time.time() / 60.0) * 0.1  # 60-second cycle
-            self.firing_rate = base_rate + cycle_factor
+        # Apply firing rate modulation
+        base_rate = sum(self.properties['firing_rate']) / 2
+        cycle_factor = math.sin(time.time() / 60.0) * 0.1  # 60-second cycle
+        self.firing_rate = base_rate + cycle_factor
         
-        # Check for burst mode
-        if self.type == 'catalyst' and random.random() < 0.03:
-            self.burst_mode = True
-            self.burst_counter = 10  # Burst lasts for 10 steps
+        # Handle energy and burst mode
+        if self.energy < 10:
+            return  # Not enough energy
         
-        # Apply burst mode effects
-        if self.burst_mode and self.burst_counter > 0:
-            self.firing_rate *= 2.0
-            self.burst_counter -= 1
-            if self.burst_counter <= 0:
-                self.burst_mode = False
+        if random.random() > self.firing_rate:
+            return
             
-        if self.type == 'oscillator':
+        self.energy -= 5 + random.random() * 5
+        self.last_fired = 0
+        self.activated = True
+        self.activation_level = 1.0
+        
+        # Node type specific behavior
+        target = None
+        if self.type == 'explorer':
+            # Random connections
+            target = random.choice(network.nodes)
+        elif self.type == 'connector':
+            # Prefer highly connected nodes
+            if random.random() < 0.7:
+                target = max(network.nodes, key=lambda n: len(n.connections) if n.visible else 0)
+            else:
+                target = random.choice(network.nodes)
+        elif self.type == 'memory':
+            # Reuse recent connections
+            if self.connections and random.random() < 0.8:
+                target_id = random.choice(list(self.connections.keys()))
+                target = next((n for n in network.nodes if n.id == target_id), None)
+        elif self.type == 'oscillator':
+            # Rhythmic firing patterns
             self.cycle_counter += 1
             wave_position = np.sin(self.cycle_counter / 10) * 0.5 + 0.5
             min_rate, max_rate = self.properties['firing_rate']
             self.firing_rate = min_rate + wave_position * (max_rate - min_rate)
-        
-        # Check energy levels
-        if self.energy < 10:
-            return  # Not enough energy to fire
-            
-        if random.random() > self.firing_rate:
-            return
-            
-        self.last_fired = 0
-        
-        # Reduce energy when firing
-        self.energy -= 5 + random.random() * 5
-        
-        if not network.nodes:
-            return
-        
-        # Node type specific behavior
-        if self.type == 'explorer':
             target = random.choice(network.nodes)
-        elif self.type == 'connector':
-            if random.random() < 0.7:
-                target = max(network.nodes, key=lambda n: len(n.connections) if n.visible else 0, default=None)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'memory':
-            if self.connections and random.random() < 0.8:
-                target_id = random.choice(list(self.connections.keys()))
-                target = next((n for n in network.nodes if n.id == target_id), None)
-                if not target:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'inhibitor':
-            if random.random() < 0.6:
-                active_nodes = [n for n in network.nodes if n.visible]
-                if active_nodes:
-                    target = max(active_nodes, key=lambda n: n.size, default=None)
-                else:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'catalyst':
-            if random.random() < 0.65:
-                visible_nodes = [n for n in network.nodes if n.visible]
-                if visible_nodes:
-                    target = min(visible_nodes, key=lambda n: len(n.connections), default=None)
-                else:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'bridge':
-            visible_nodes = [n for n in network.nodes if n.visible]
-            if random.random() < 0.7 and visible_nodes:
-                isolated_nodes = [n for n in visible_nodes if 0 < len(n.connections) < 3]
-                if isolated_nodes:
-                    target = random.choice(isolated_nodes)
-                else:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'pruner':
-            if random.random() < 0.6:
-                def weak_connection_count(node):
-                    return sum(1 for strength in node.connections.values() if strength < 1.0)
-                    
-                visible_nodes = [n for n in network.nodes if n.visible]
-                candidates = [n for n in visible_nodes if weak_connection_count(n) > 0]
-                if candidates:
-                    target = max(candidates, key=weak_connection_count)
-                else:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'mimic':
-            if random.random() < 0.7:
-                visible_nodes = [n for n in network.nodes if n.visible and n.id != self.id]
-                if visible_nodes:
-                    role_model = max(visible_nodes, key=lambda n: len(n.connections))
-                    if role_model.connections:
-                        target_id = random.choice(list(role_model.connections.keys()))
-                        target = next((n for n in network.nodes if n.id == target_id), None)
-                        if not target:
-                            target = random.choice(network.nodes)
-                    else:
-                        target = random.choice(network.nodes)
-                else:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'attractor':
-            if len(self.connections) >= 5 and random.random() < 0.7:
-                if self.connections:
-                    target_id = random.choice(list(self.connections.keys()))
-                    target = next((n for n in network.nodes if n.id == target_id), None)
-                    if not target:
-                        target = random.choice(network.nodes)
-                else:
-                    target = random.choice(network.nodes)
-            else:
-                candidates = [n for n in network.nodes if n.id not in self.last_targets and n.id != self.id]
-                if candidates:
-                    target = random.choice(candidates)
-                else:
-                    target = random.choice(network.nodes)
-                
-                self.last_targets.add(target.id)
-                if len(self.last_targets) > 10:
-                    self.last_targets.pop()
-        elif self.type == 'sentinel':
-            if self.connections and random.random() < 0.8:
-                target_id = min(self.connections.items(), key=lambda x: x[1])[0]
-                target = next((n for n in network.nodes if n.id == target_id), None)
-                if not target:
-                    target = random.choice(network.nodes)
-            else:
-                visible_nodes = [n for n in network.nodes if n.visible and n.age > 10]
-                if visible_nodes:
-                    target = random.choice(visible_nodes)
-                else:
-                    target = random.choice(network.nodes)
-        elif self.type == 'equalizer':
-            # Find nodes with overly strong connections
-            strong_nodes = [n for n in network.nodes if n.visible and 
-                           any(strength > 2.0 for strength in n.connections.values())]
-            if strong_nodes and random.random() < 0.7:
-                target = random.choice(strong_nodes)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'reward':
-            # Find nodes with many connections and reward them
-            active_nodes = [n for n in network.nodes if n.visible and len(n.connections) > 3]
-            if active_nodes and random.random() < 0.8:
-                target = random.choice(active_nodes)
-            else:
-                target = random.choice(network.nodes)
-        elif self.type == 'buffer':
-            # Store recent connections and replay them
-            if self.stored_signals and random.random() < 0.7:
-                target_id = self.stored_signals.pop(0)
-                target = next((n for n in network.nodes if n.id == target_id), None)
-                if not target:
-                    target = random.choice(network.nodes)
-            else:
-                target = random.choice(network.nodes)
-                if len(self.stored_signals) < 5 and target.id != self.id:
-                    self.stored_signals.append(target.id)
-        else:
-            target = random.choice(network.nodes)
-        
-        # Neighbor-aware connection logic
-        if random.random() < 0.3:  # 30% chance of using neighbor awareness
-            nearby_nodes = self._get_nearby_nodes(network)
-            if nearby_nodes:
-                if len(nearby_nodes) > 5 and random.random() < 0.7:
-                    # Too crowded, look for less connected regions
-                    target = min(nearby_nodes, key=lambda n: len(n.connections))
-                else:
-                    # Not too crowded, connect within neighborhood
-                    target = random.choice(nearby_nodes)
-        
-        # Set activation and create signals when firing
-        self.activated = True
-        self.activation_level = 1.0
             
-        # When connecting, create a signal for visualization
-        if target and target.id != self.id:
-            # Channel-based connection logic
-            if hasattr(target, 'channel') and (self.channel == target.channel or random.random() < 0.4):
-                self.connect(target)
-                self.connection_attempts += 1
-                
-                # Create signal from this node to target
-                signal_strength = self.properties['connection_strength']
-                self.signals.append({
-                    'target_id': target.id,
-                    'strength': signal_strength,
-                    'progress': 0.0,  # 0.0 to 1.0 progress along path
-                    'duration': 20,   # How many steps signal lasts
-                    'remaining': 20,   # Counter for remaining steps
-                    'channel': self.channel  # Add communication channel
-                })
-                
-    def _get_nearby_nodes(self, network):
-        """Get nodes that are spatially close to this one."""
-        nearby = []
-        for node in network.nodes:
-            if node.id != self.id and node.visible:
-                # Calculate Euclidean distance
-                distance = sum((a - b) ** 2 for a, b in zip(self.position, node.position)) ** 0.5
-                if distance < 5.0:  # Within range
-                    nearby.append(node)
-        return nearby
-
-    def process_signals(self, network):
-        """Process and update signals originating from this node."""
-        # Update activation level decay
-        if self.activated:
-            self.activation_level *= 0.9  # Decay activation
-            if self.activation_level < 0.1:
-                self.activated = False
-        
-        # Update existing signals
-        for signal in list(self.signals):
-            # Advance signal along path
-            signal['progress'] += 0.05
-            signal['remaining'] -= 1
+        # Create signal when firing
+        if target and target.visible and target.id != self.id:
+            signal = {
+                'target_id': target.id,
+                'strength': 1.0,
+                'progress': 0.0,
+                'duration': 15,
+                'channel': self.channel
+            }
+            self.signals.append(signal)
+            self.connection_attempts += 1
             
-            # If signal reaches target, activate target node
-            if signal['progress'] >= 1.0:
-                target_node = next((n for n in network.nodes if n.id == signal['target_id']), None)
-                if target_node:
-                    # Transfer activation to target
-                    target_boost = min(0.7, signal['strength'] * 0.2)
-                    target_node.activation_level = max(target_node.activation_level, target_boost)
-                    if target_boost > 0.3:
-                        target_node.activated = True
+            # Update node memory
+            self.memory = max(self.memory, self.size)
+            self.last_targets.add(target.id)
+            if len(self.last_targets) > 10:
+                self.last_targets.pop()
                 
-                # Remove completed signal
-                self.signals.remove(signal)
-            # Remove expired signals
-            elif signal['remaining'] <= 0:
-                self.signals.remove(signal)
+            # Try to form connection
+            self.connect(target)
 
     def connect(self, other_node):
-        """Form or strengthen a connection to another node with specialized behaviors."""
         strength = self.properties['connection_strength']
-        
-        if self.type == 'inhibitor':
-            strength *= 0.5
-        
-        if self.type == 'catalyst' and other_node.id not in self.connections:
-            strength *= 1.5
-        
-        if self.type == 'attractor':
-            strength *= 1.5
-            for i in range(3):
-                other_node.velocity[i] += (self.position[i] - other_node.position[i]) * 0.05
-        
-        if self.type == 'pruner':
-            strength *= 0.7
-        
-        if self.type == 'sentinel':
-            strength *= 1.2
-        
-        if len(self.connections) >= self.max_connections:
-            weakest = min(self.connections.items(), key=lambda x: x[1], default=(None, 0))
-            if weakest[0] is not None:
-                del self.connections[weakest[0]]
-                
-        if other_node.id in self.connections:
-            self.connections[other_node.id] += strength
-        else:
-            self.connections[other_node.id] = strength
-            self.successful_connections += 1
-            
-            other_strength = NODE_TYPES[other_node.type]['connection_strength']
-            
-            if other_node.type == 'sentinel':
-                other_strength *= 1.2
-            elif other_node.type == 'pruner':
-                other_strength *= 0.7
-                
-            if len(other_node.connections) >= other_node.max_connections:
-                weakest = min(other_node.connections.items(), key=lambda x: x[1], default=(None, 0))
-                if weakest[0] is not None:
-                    del other_node.connections[weakest[0]]
-                    
-            if self.id not in other_node.connections:
-                other_node.connections[self.id] = other_strength
-                other_node.successful_connections += 1
-            else:
-                other_node.connections[self.id] += other_strength
-                
-            if not other_node.visible:
-                other_node.visible = True
-                other_node.size = random.uniform(*other_node.properties['size_range']) * 0.5
+        if len(self.connections) < self.max_connections:
+            if other_node.id not in self.connections:
+                self.connections[other_node.id] = strength
+
+    def _calculate_stdp(self, current_time, other_node):
+        if not other_node.spike_history:
+            return 0
+        pre_spike = self.last_spike_time
+        post_spike = other_node.last_spike_time
+        return 0  # Placeholder
 
     def weaken_connections(self):
-        """Reduce strength of connections over time, with type-specific decay rates."""
-        # Adaptive decay based on number of connections
-        conn_count = len(self.connections)
-        if conn_count > 10:
-            # More connections mean faster decay
-            self.adaptive_decay = self.base_decay_rate * (1.0 + 0.1 * (conn_count - 10) / 5)
-        elif conn_count < 3:
-            # Few connections mean slower decay
-            self.adaptive_decay = max(self.base_decay_rate * 0.7, 0.01)
-        else:
-            # Reset to base rate
-            self.adaptive_decay = self.base_decay_rate
-        
-        min_decay, max_decay = self.properties['decay_rate']
-        
-        if self.type == 'sentinel':
-            min_decay *= 0.5
-            max_decay *= 0.5
-        
-        if self.type == 'oscillator':
-            cycle_position = np.sin(self.cycle_counter / 15) * 0.5 + 0.5
-            if cycle_position > 0.7:
-                # Limit oscillator strengthening to prevent takeover
-                for node_id in list(self.connections.keys()):
-                    if random.random() < 0.3:  # Only strengthen some connections
-                        self.connections[node_id] *= 1.03  # Reduced from 1.05
-                self.memory = max(self.memory, self.size)
-                self.size = max(10, min(self.properties['size_range'][1] * 1.3, self.size))  # Reduced max multiplier
-                self.age += 1
-                self.last_fired += 1
-                return
-        
-        if self.type == 'pruner':
-            min_decay *= 1.2
-            max_decay *= 1.2
-            
-        if self.type == 'equalizer':
-            for node_id in list(self.connections.keys()):
-                if self.connections[node_id] > 2.0:
-                    self.connections[node_id] *= 0.95  # Reduce strong connections
-        
-        for node_id in list(self.connections.keys()):
-            decay_amount = random.uniform(min_decay, max_decay) * self.adaptive_decay
-            self.connections[node_id] -= decay_amount
-            
-            if self.type == 'attractor' and self.connections[node_id] <= 0:
-                if random.random() < 0.3:
-                    self.connections[node_id] = 0.1
-                    continue
-            
-            if self.connections[node_id] <= 0:
-                del self.connections[node_id]
-        
-        self.memory = max(self.memory, self.size)
-        connection_strength = sum(self.connections.values()) if self.connections else 0
-        min_size, max_size = self.properties['size_range']
-        
-        growth = connection_strength * 0.1
-        
-        if self.type == 'mimic' and self.successful_connections > 0:
-            growth *= 1.2
-            
-        decay = self.size * 0.03
-        size_change = growth - decay
-        
-        self.size = max(10, min(max_size * 1.5, self.size + size_change))
-        
-        if self.type == 'sentinel':
-            if self.size < 10 or (len(self.connections) == 0 and self.age > 50):
-                self.visible = False
-        else:
-            if self.size < 15 or len(self.connections) == 0:
-                self.visible = False
-                
-        if self.type == 'bridge' and len(self.connections) >= 3:
-            self.visible = True
-            
-        self.last_fired += 1
-        self.age += 1
-        
-        # Recover energy over time
-        self.energy = min(100.0, self.energy + 1.5)
+        pass
 
     def attempt_resurrection(self):
-        """Try to resurrect invisible nodes based on type-specific rules."""
-        resurrection_chance = self.properties['resurrection_chance']
-        
-        if self.type == 'sentinel':
-            resurrection_chance *= 1.5
-            memory_threshold = 30
-        else:
-            memory_threshold = 50
-        
-        if self.type == 'oscillator' and random.random() < 0.05:
-            self.visible = True
-            self.size = max(40, self.memory * 0.4)
-            self.cycle_counter = 0
-            return
-        
-        if not self.visible and self.memory > memory_threshold and random.random() < resurrection_chance:
-            self.visible = True
-            self.size = self.memory * 0.6
-            
-            if self.type == 'attractor':
-                self.size *= 1.2
-                
+        """Try to resurrect a dead node."""
+        if not self.visible and random.random() < self.properties['resurrection_chance']:
+            self.visible = True 
+            self.energy = 50.0
+            self.size *= 0.8
+            self.connections.clear()
+            return True
+        return False
+
     def update_position(self, network):
-        """Update the 3D position of the node based on connections and natural movement."""
-        for conn_id, strength in self.connections.items():
-            if conn_id < len(network.nodes):
-                target = network.nodes[conn_id]
-                for i in range(3):
-                    force = (target.position[i] - self.position[i]) * strength * 0.01
-                    self.velocity[i] += force
-        
+        """Update node's 3D position based on forces."""
+        if not self.visible:
+            return
+            
+        # Add slight random movement
         for i in range(3):
             self.velocity[i] += random.uniform(-0.01, 0.01)
-            self.velocity[i] *= 0.95
+            self.velocity[i] = max(-0.1, min(0.1, self.velocity[i]))
             self.position[i] += self.velocity[i]
-            self.position[i] = max(-15, min(15, self.position[i]))
+            
+        # Keep within bounds
+        for i in range(3):
+            if abs(self.position[i]) > 10:
+                self.position[i] = 10 * (1 if self.position[i] > 0 else -1)
+                self.velocity[i] *= -0.5
+
+    def process_signals(self, network):
+        """Process and update node signals."""
+        # Update activation level decay
+        if self.activated:
+            self.activation_level *= 0.95
+            if self.activation_level < 0.05:
+                self.activated = False
+                self.activation_level = 0.0
+
+        # Update signal progress and handle completions
+        for signal in list(self.signals):
+            signal['progress'] = min(1.0, signal['progress'] + 0.05)
+            signal['duration'] -= 1
+            
+            if signal['progress'] >= 1.0 or signal['duration'] <= 0:
+                self.signals.remove(signal)
+                continue
+                
+            # Handle special signal types based on node type
+            if self.type == 'memory' and random.random() < 0.3:
+                signal['duration'] += 1
+            elif self.type == 'catalyst':
+                signal['strength'] *= 1.05
 
 class NeuralNetwork:
     def __init__(self, max_nodes=200):
         self.nodes = []
         self.graph = nx.Graph()
         self.simulation_steps = 0
-        self.last_save_time = time.time()
-        self.save_interval = 300  # Save every 5 minutes by default
-        self.start_time = time.time()
-        self.learning_rate = 0.1
         self.max_nodes = max_nodes
-        self.energy_pool = 1000.0  # Shared energy pool
-        self.shock_countdown = random.randint(20, 100)  # Steps until next shock event
+        self.energy_pool = 1000.0
+        self.learning_rate = 0.1
+        self.reward_state = 0.0
         self.stats = {
             'node_count': [],
             'visible_nodes': [],
             'connection_count': [],
             'avg_size': [],
             'type_distribution': {t: [] for t in NODE_TYPES},
-            'energy_pool': [],  # Track energy pool
-            'avg_energy': []    # Track average node energy
+            'avg_energy': [],
+            'energy_pool': []
         }
-    
+        self.pattern_cache = {}
+        self.firing_history = deque(maxlen=1000)
+        self.save_interval = 300  # Save every 5 minutes
+        self.last_save_time = time.time()
+        self.start_time = time.time()
+        self.shock_countdown = 50
+
     def add_node(self, visible=True, node_type=None, max_connections=15):
-        """Add a new node to the network."""
-        if len(self.nodes) >= self.max_nodes:
-            invisible_nodes = [n for n in self.nodes if not n.visible]
-            if invisible_nodes:
-                node = random.choice(invisible_nodes)
-                node.visible = True
-                node.size = random.uniform(*node.properties['size_range']) * 0.7
-                return node
-        
         node = Node(len(self.nodes), node_type=node_type, visible=visible, max_connections=max_connections)
         self.nodes.append(node)
         self.graph.add_node(node.id)
@@ -660,176 +359,399 @@ class NeuralNetwork:
     def step(self):
         """Simulate one step of network activity."""
         self.simulation_steps += 1
-
-        # Distribute energy from the pool to nodes
-        self._distribute_energy()
         
-        # Handle shock events
-        self.shock_countdown -= 1
-        if self.shock_countdown <= 0:
-            self._trigger_shock_event()
-            self.shock_countdown = random.randint(50, 150)  # Reset countdown
-
-        node_count = len(self.nodes)
-        if node_count < self.max_nodes and random.random() < 0.15 * (1 - node_count / self.max_nodes):
-            self.add_node(visible=random.random() > 0.7)
-
+        # Handle periodic events
+        if self.simulation_steps % 100 == 0:
+            self._distribute_energy()
+        
+        if self.shock_countdown > 0:
+            self.shock_countdown -= 1
+            if self.shock_countdown == 0:
+                self._trigger_shock_event()
+        
+        # Process each node
         for node in self.nodes:
             if node.visible:
-                if random.random() < 0.1:
-                    self._apply_hebbian_learning(node)
                 node.fire(self)
                 node.weaken_connections()
                 node.update_position(self)
-                # Process signals for visualization
                 node.process_signals(self)
-            else:
-                node.attempt_resurrection()
-
+                node.age += 1
+                
+                # Apply learning and specialization
+                if random.random() < 0.1:
+                    self._apply_hebbian_learning(node)
+                    
+                # Natural decay and energy loss
+                node.energy = max(0, node.energy - node.adaptive_decay)
+                
+                # Handle death and resurrection
+                if node.energy <= 0 or len(node.connections) == 0:
+                    node.visible = False
+                elif not node.visible:
+                    node.attempt_resurrection()
+        
+        # Apply network-wide effects
+        self.apply_spatial_effects()
         self.update_graph()
         self.record_stats()
-
+        
+        # Auto-save periodically
         if time.time() - self.last_save_time > self.save_interval:
             self.save_state()
             self.last_save_time = time.time()
 
     def _apply_hebbian_learning(self, node):
-        """Apply Hebbian learning: neurons that fire together, wire together."""
+        """Apply Hebbian learning to strengthen frequently used connections."""
         if not node.connections or len(node.connections) < 2:
             return
 
         target_id = random.choice(list(node.connections.keys()))
-        target_node = next((n for n in self.nodes if n.id == target_id), None)
-
-        if not target_node or not target_node.visible:
+        target = next((n for n in self.nodes if n.id == target_id), None)
+        if not target or not target.visible:
             return
 
-        common_connections = set(node.connections.keys()) & set(target_node.connections.keys())
-        if not common_connections:
+        common = set(node.connections.keys()) & set(target.connections.keys())
+        if not common:
             return
 
-        for common_id in common_connections:
-            if common_id == node.id or common_id == target_node.id:
+        for common_id in common:
+            if common_id == node.id or common_id == target_id:
                 continue
-
-            node.connections[common_id] += self.learning_rate
-            target_node.connections[common_id] += self.learning_rate
+            boost = node.genes['learning_rate'] * (1 + self.reward_state)
+            node.connections[common_id] *= (1 + boost)
+            target.connections[common_id] *= (1 + boost)
 
     def _distribute_energy(self):
-        """Distribute energy from the pool to nodes."""
+        """Distribute energy from pool to nodes."""
         if not self.nodes:
             return
             
-        # Replenish pool
         self.energy_pool = min(1000.0, self.energy_pool + 5.0)
-        
-        # Calculate total energy needed
         active_nodes = [n for n in self.nodes if n.visible]
         if not active_nodes:
             return
             
         avg_energy = sum(n.energy for n in active_nodes) / len(active_nodes)
-        if avg_energy > 40:  # If average energy is high enough, skip distribution
-            return
+        if avg_energy > 40:
+            self.energy_pool = min(1000.0, self.energy_pool + 20.0)
             
-        # Distribute energy to nodes with low energy
         energy_per_node = min(10.0, self.energy_pool / len(active_nodes))
         for node in active_nodes:
-            if node.energy < 30:  # Only give energy to nodes that need it
-                transfer = energy_per_node * (1 - node.energy/100)
-                node.energy = min(100.0, node.energy + transfer)
+            if node.energy < 70:
+                transfer = energy_per_node * 0.5
+                node.energy += transfer
                 self.energy_pool -= transfer
+                if self.energy_pool <= 0:
+                    break
 
     def _trigger_shock_event(self):
-        """Trigger a system-wide shock event that activates random nodes."""
+        """Trigger network-wide shock event."""
         active_nodes = [n for n in self.nodes if n.visible]
         if not active_nodes:
             return
             
-        # Activate a random subset of nodes (10-30%)
         shock_count = max(1, int(len(active_nodes) * random.uniform(0.1, 0.3)))
         shocked_nodes = random.sample(active_nodes, shock_count)
         
         for node in shocked_nodes:
-            node.activated = True
-            node.activation_level = 1.0
-            node.energy = min(100.0, node.energy + 20)  # Energy boost
+            node.energy += 20
+            node.size = min(node.size + 5, node.properties['size_range'][1] * 1.5)
+            node.burst_mode = True
+            node.burst_counter = random.randint(2, 5)
             
-            # Create random connections from shocked nodes
-            for _ in range(3):
-                if random.random() < 0.7:
-                    target = random.choice(active_nodes)
-                    if target.id != node.id:
-                        node.connect(target)
-                        # Create signal
-                        node.signals.append({
-                            'target_id': target.id,
-                            'strength': 2.0,  # Strong shock signal
-                            'progress': 0.0,
-                            'duration': 15,
-                            'remaining': 15,
-                            'channel': node.channel
-                        })
+        self.shock_countdown = random.randint(40, 100)
 
     def update_graph(self):
-        """Update the visualization graph."""
         self.graph.clear_edges()
         for node in self.nodes:
-            if node.visible:
-                for conn_id, strength in node.connections.items():
-                    if conn_id < len(self.nodes) and self.nodes[conn_id].visible:
-                        self.graph.add_edge(node.id, conn_id, weight=strength)
+            for tgt_id in node.connections:
+                self.graph.add_edge(node.id, tgt_id)
 
     def record_stats(self):
         """Record network statistics."""
         visible = [n for n in self.nodes if n.visible]
         visible_count = len(visible)
-
+        connection_count = sum(len(n.connections) for n in self.nodes)
+        
+        # Calculate averages
         if visible_count > 0:
             avg_size = sum(n.size for n in visible) / visible_count
             avg_energy = sum(n.energy for n in visible) / visible_count
         else:
             avg_size = 0
             avg_energy = 0
-
-        connection_count = sum(len(n.connections) for n in self.nodes)
-
+            
+        # Record base stats
         self.stats['node_count'].append(len(self.nodes))
         self.stats['visible_nodes'].append(visible_count)
         self.stats['connection_count'].append(connection_count)
         self.stats['avg_size'].append(avg_size)
-        self.stats['energy_pool'].append(self.energy_pool)
         self.stats['avg_energy'].append(avg_energy)
-
+        self.stats['energy_pool'].append(self.energy_pool)
+        
+        # Record type distribution
         type_counts = {t: 0 for t in NODE_TYPES}
         for node in visible:
             type_counts[node.type] += 1
-
+        
         for node_type in NODE_TYPES:
             self.stats['type_distribution'][node_type].append(type_counts.get(node_type, 0))
 
+    def detect_firing_patterns(self, min_length=3, min_occurrences=2):
+        """Detect recurring firing patterns."""
+        if len(self.firing_history) < min_length:
+            return []
+            
+        cache_key = f"{min_length}_{min_occurrences}_{len(self.firing_history)}"
+        if cache_key in self.pattern_cache:
+            return self.pattern_cache[cache_key]
+            
+        patterns = []
+        history_len = len(self.firing_history)
+        
+        for pattern_len in range(min_length, min(10, history_len // 2)):
+            for i in range(history_len - pattern_len):
+                pattern = tuple(tuple(sorted(frame)) for frame in self.firing_history[i:i+pattern_len])
+                occurrences = []
+                
+                for j in range(i + 1, history_len - pattern_len + 1):
+                    test_pattern = tuple(tuple(sorted(frame)) for frame in self.firing_history[j:j+pattern_len])
+                    if pattern == test_pattern:
+                        occurrences.append(j)
+                        
+                if len(occurrences) >= min_occurrences - 1:
+                    is_new = True
+                    for existing in patterns:
+                        if existing['pattern'] == pattern:
+                            is_new = False
+                            break
+                            
+                    if is_new:
+                        patterns.append({
+                            'pattern': pattern,
+                            'length': pattern_len,
+                            'occurrences': [i] + occurrences,
+                            'count': len(occurrences) + 1
+                        })
+        
+        self.pattern_cache[cache_key] = patterns[:10]
+        return patterns[:10]
+
+    def visualize_firing_patterns(self):
+        """Visualize detected firing patterns."""
+        patterns = self.detect_firing_patterns()
+        if not patterns:
+            fig = go.Figure()
+            fig.add_annotation(text="No patterns detected yet", showarrow=False, font=dict(size=16))
+            return fig
+            
+        fig = go.Figure()
+        top_patterns = patterns[:min(5, len(patterns))]
+        
+        for i, pattern_data in enumerate(top_patterns):
+            pattern = pattern_data['pattern']
+            occurrences = pattern_data['count']
+            
+            # Create visualization for each pattern
+            all_node_ids = set()
+            for frame in pattern:
+                all_node_ids.update(frame)
+                
+            all_node_ids = sorted(list(all_node_ids))
+            node_y_pos = {node_id: idx for idx, node_id in enumerate(all_node_ids)}
+            
+            for occurrence_idx, start_pos in enumerate(pattern_data['occurrences'][:3]):
+                for frame_idx, frame in enumerate(pattern):  # Fixed: proper item unpacking
+                    for node_id in frame:
+                        fig.add_trace(go.Scatter(
+                            x=[start_pos + frame_idx],
+                            y=[node_y_pos[node_id] + i * (len(all_node_ids) + 2)],
+                            mode='markers',
+                            marker=dict(size=10, color='rgba(0,100,255,0.8)', symbol='square'),
+                            hoverinfo='text',
+                            hovertext=f"Pattern {i+1}, Node {node_id}",
+                            showlegend=False
+                        ))
+                        
+            fig.add_annotation(
+                x=0,
+                y=i * (len(all_node_ids) + 2) + len(all_node_ids) / 2,
+                text=f"Pattern {i+1}: {occurrences} occurrences",
+                showarrow=False,
+                xanchor='left',
+                yanchor='middle',
+                font=dict(size=12)
+            )
+        
+        fig.update_layout(
+            title="Firing Pattern Analysis",
+            xaxis=dict(title="Time Step"),
+            yaxis=dict(showticklabels=False),
+            height=max(300, 100 * len(top_patterns)),
+            template="plotly_white"
+        )
+        
+        return fig
+
+    def get_activity_heatmap(self):
+        """Generate a heatmap of neural activity."""
+        grid_size = 50
+        x_range = [-15, 15]
+        y_range = [-15, 15]
+        grid = np.zeros((grid_size, grid_size))
+        
+        for node in self.nodes:
+            if node.visible:
+                x_idx = int((node.position[0] - x_range[0]) / (x_range[1] - x_range[0]) * (grid_size-1))
+                y_idx = int((node.position[1] - y_range[0]) / (y_range[1] - y_range[0]) * (grid_size-1))
+                x_idx = max(0, min(grid_size-1, x_idx))
+                y_idx = max(0, min(grid_size-1, y_idx))
+                
+                activity_level = 0.0
+                if hasattr(node, 'activation_level'):
+                    activity_level = node.activation_level
+                elif node.last_fired < 5:
+                    activity_level = 1.0 - (node.last_fired / 5.0)
+                    
+                grid[y_idx, x_idx] += activity_level * (node.size / 100)
+        
+        fig = go.Figure(data=go.Heatmap(
+            z=grid,
+            x=np.linspace(x_range[0], x_range[1], grid_size),
+            y=np.linspace(y_range[0], y_range[1], grid_size),
+            colorscale='Viridis',
+            showscale=True,
+            opacity=0.8
+        ))
+        
+        fig.update_layout(
+            title="Neural Activity Heatmap",
+            xaxis_title="X Position",
+            yaxis_title="Y Position",
+            width=600,
+            height=600,
+            template="plotly_dark"
+        )
+        
+        return fig
+
+    def _prune_weak_connections(self, node):
+        """Prune connections that are too weak."""
+        if not node.connections:
+            return
+            
+        weak_connections = [(node_id, strength) for node_id, strength in node.connections.items() if strength < 0.3]
+        for node_id, strength in weak_connections:
+            del node.connections[node_id]
+
+    def apply_spatial_effects(self):
+        """Apply effects based on spatial proximity."""
+        positions = np.array([node.position for node in self.nodes])
+        tree = cKDTree(positions)
+        
+        neighbors = {}
+        for i, node in enumerate(self.nodes):
+            if node.visible:
+                nearby_indices = tree.query_ball_point(node.position, r=5.0)
+                neighbors[node.id] = [j for j in nearby_indices if j != i]
+                
+        for node in self.nodes:
+            if not node.visible or node.id not in neighbors:
+                continue
+                
+            nearby_nodes = [self.nodes[i] for i in neighbors[node.id]]
+            if not nearby_nodes:
+                continue
+                
+            # Calculate average properties of neighbors
+            avg_size = sum(n.size for n in nearby_nodes) / len(nearby_nodes)
+            
+            # Clustering effect - adjust node properties based on neighbors
+            if avg_size > node.size * 1.5:
+                # Smaller nodes grow faster when surrounded by larger nodes
+                node.size *= 1.01
+            elif len(nearby_nodes) > 6:
+                # Too crowded, reduce size slightly
+                node.size *= 0.997
+
+    def get_connection_strength_visualization(self):
+        """Generate visualization of connection strengths."""
+        fig = go.Figure()
+        pos = self.calculate_3d_layout()
+        
+        # Create colorscale for connection strengths
+        colorscale = [
+            [0.0, 'rgba(200,200,200,0.2)'],
+            [0.5, 'rgba(0,100,255,0.5)'],
+            [1.0, 'rgba(255,0,0,0.8)']
+        ]
+        
+        # Get all connection weights
+        weights = []
+        for node in self.nodes:
+            if node.visible:
+                weights.extend(node.connections.values())
+                
+        if not weights:
+            fig.add_annotation(text="No connections yet", showarrow=False)
+            return fig
+            
+        max_weight = max(weights)
+        
+        # Create traces for connections
+        for node in self.nodes:
+            if node.visible and node.id in pos:
+                x0, y0, z0 = pos[node.id]
+                
+                for target_id, weight in node.connections.items():
+                    if target_id in pos:
+                        x1, y1, z1 = pos[target_id]
+                        
+                        # Normalize weight for color
+                        norm_weight = weight / max_weight
+                        
+                        fig.add_trace(go.Scatter3d(
+                            x=[x0, x1],
+                            y=[y0, y1],
+                            z=[z0, z1],
+                            mode='lines',
+                            line=dict(
+                                color=norm_weight,
+                                colorscale=colorscale,
+                                width=2 + norm_weight * 3
+                            ),
+                            hoverinfo='text',
+                            hovertext=f'Strength: {weight:.2f}',
+                            showlegend=False
+                        ))
+        
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+                yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+                zaxis=dict(showticklabels=False, showgrid=False, zeroline=False)
+            ),
+            title="Connection Strength Visualization",
+            showlegend=False
+        )
+        
+        return fig
+
     def calculate_3d_layout(self):
-        """Calculate 3D positions for visualization."""
         pos = {}
         for node in self.nodes:
             if node.visible:
-                pos[node.id] = tuple(node.position)
+                pos[node.id] = (node.position[0], node.position[1], node.position[2])
         return pos
 
     def visualize(self, mode='3d'):
         """Visualize the network with enhanced visuals."""
-        visible_nodes = [n for n in self.nodes if n.visible]
-
-        if not visible_nodes:
+        if not self.nodes:
             fig = go.Figure()
-            fig.add_annotation(
-                text="No visible nodes yet",
-                xref="paper", yref="paper",
-                x=0.5, y=0.5, showarrow=False,
-                font=dict(size=20)
-            )
+            fig.add_annotation(text="No nodes yet", showarrow=False)
             return fig
-
+            
         if mode == '3d':
             return self._visualize_3d()
         else:
@@ -838,168 +760,104 @@ class NeuralNetwork:
     def _visualize_3d(self):
         """Create 3D visualization of the network with enhanced aesthetics."""
         fig = go.Figure()
-
         pos = self.calculate_3d_layout()
-
-        # Draw edges with improved visual effects - including signal visualization
+        
+        # Draw edges with signal animations
         edge_traces = []
         signal_traces = []
         
-        # First add basic connections
+        # Add basic connections
         for edge in self.graph.edges(data=True):
             u, v, data = edge
             if u in pos and v in pos:
                 x0, y0, z0 = pos[u]
                 x1, y1, z1 = pos[v]
-                weight = data['weight']
                 
-                # Create curved connection lines for better aesthetics
-                pts = np.linspace(0, 1, 12)
-                arc_height = min(0.5, weight * 0.1)
+                # Get connection strength
+                strength = 0
+                if v in self.nodes[u].connections:
+                    strength = self.nodes[u].connections[v]
+                elif u in self.nodes[v].connections:
+                    strength = self.nodes[v].connections[u]
                 
-                x_vals = []
-                y_vals = []
-                z_vals = []
+                # Create color gradient based on strength
+                color = f'rgba({min(255, int(strength * 50))}, {100 + min(155, int(strength * 20))}, {255 - min(255, int(strength * 30))}, {min(0.9, 0.2 + strength/5)})'
                 
-                for p in pts:
-                    x_vals.append(x0 * (1-p) + x1 * p)
-                    y_vals.append(y0 * (1-p) + y1 * p)
-                    # Add curve to z-axis
-                    z_arc = arc_height * np.sin(p * np.pi)
-                    z_vals.append(z0 * (1-p) + z1 * p + z_arc)
-                
-                # Color based on connection weight
-                color = f'rgba({min(255, int(weight * 50))}, {100 + min(155, int(weight * 20))}, {255 - min(255, int(weight * 30))}, {min(0.9, 0.2 + weight/5)})'
-                
+                # Add edge trace
                 edge_traces.append(go.Scatter3d(
-                    x=x_vals,
-                    y=y_vals,
-                    z=z_vals,
+                    x=[x0, x1, None],
+                    y=[y0, y1, None],
+                    z=[z0, z1, None],
                     mode='lines',
-                    line=dict(
-                        width=min(8, weight),
-                        color=color
-                    ),
-                    hoverinfo='none',
+                    line=dict(color=color, width=2),
+                    hoverinfo='text',
+                    hovertext=f'Strength: {strength:.2f}',
                     showlegend=False
                 ))
-                
-                # Add direction indicator (don't use arrow symbol as it's not supported in 3D)
-                arrow_pos = 0.7  # 70% along the path
-                arrow_idx = int(arrow_pos * (len(x_vals)-1))
-                if arrow_idx < len(x_vals)-1:
-                    edge_traces.append(go.Scatter3d(
-                        x=[x_vals[arrow_idx]],
-                        y=[y_vals[arrow_idx]],
-                        z=[z_vals[arrow_idx]],
-                        mode='markers',
-                        marker=dict(
-                            symbol='diamond',
-                            size=5,
-                            color=color,
-                            opacity=0.8
-                        ),
-                        hoverinfo='none',
-                        showlegend=False
-                    ))
 
-        # Now add active signals
+        # Add signal animations
         for node in self.nodes:
             if node.visible and hasattr(node, 'signals') and node.signals:
                 for signal in node.signals:
-                    target_id = signal['target_id']
-                    if target_id < len(self.nodes) and self.nodes[target_id].visible:
-                        target_node = self.nodes[target_id]
-                        
-                        # Get positions
-                        if node.id in pos and target_id in pos:
-                            x0, y0, z0 = pos[node.id]
-                            x1, y1, z1 = pos[target_id]
-                            
-                            # Calculate signal position along path
-                            p = signal['progress']
-                            arc_height = min(0.5, signal['strength'] * 0.1)
-                            z_arc = arc_height * np.sin(p * np.pi)
-                            
-                            x = x0 * (1-p) + x1 * p
-                            y = y0 * (1-p) + y1 * p
-                            z = z0 * (1-p) + z1 * p + z_arc
-                            
-                            # Create pulsing signal
-                            signal_color = f'rgba(255, 220, 0, {0.7 + 0.3*np.sin(signal["remaining"]/2)})'
-                            signal_size = 7 + 3 * signal['strength']
-                            
-                            signal_traces.append(go.Scatter3d(
-                                x=[x],
-                                y=[y],
-                                z=[z],
-                                mode='markers',
-                                marker=dict(
-                                    symbol='circle',
-                                    size=signal_size,
-                                    color=signal_color,
-                                    opacity=0.9,
-                                ),
-                                hoverinfo='text',
-                                hovertext=f"Signal: {node.type}->{target_node.type}<br>Strength: {signal['strength']:.2f}",
-                                showlegend=False
-                            ))
-        
-        # Add all traces
+                    if 'target_id' in signal:
+                        target_id = signal['target_id']
+                        if target_id < len(self.nodes) and self.nodes[target_id].visible:
+                            if node.id in pos and target_id in pos:
+                                x0, y0, z0 = pos[node.id]
+                                x1, y1, z1 = pos[target_id]
+                                progress = signal.get('progress', 0)
+                                
+                                # Interpolate signal position
+                                xp = x0 + (x1 - x0) * progress
+                                yp = y0 + (y1 - y0) * progress
+                                zp = z0 + (z1 - z0) * progress
+                                
+                                signal_traces.append(go.Scatter3d(
+                                    x=[xp],
+                                    y=[yp],
+                                    z=[zp],
+                                    mode='markers',
+                                    marker=dict(
+                                        size=8,
+                                        color='red',
+                                        symbol='diamond',
+                                        opacity=0.7
+                                    ),
+                                    showlegend=False
+                                ))
+
+        # Add all edge traces
         for trace in edge_traces:
             fig.add_trace(trace)
-            
+        
+        # Add all signal traces
         for trace in signal_traces:
             fig.add_trace(trace)
 
-        # Add nodes with improved styling
+        # Add nodes grouped by type
         nodes_by_type = {}
         for node in self.nodes:
-            if node.visible:
+            if node.visible and node.id in pos:
                 if node.type not in nodes_by_type:
                     nodes_by_type[node.type] = {
                         'x': [], 'y': [], 'z': [],
                         'sizes': [], 'text': [], 'colors': []
                     }
-
+                    
                 x, y, z = pos[node.id]
                 nodes_by_type[node.type]['x'].append(x)
                 nodes_by_type[node.type]['y'].append(y)
                 nodes_by_type[node.type]['z'].append(z)
-                
-                # Scale node size better
-                node_size = node.size/2.5
-                nodes_by_type[node.type]['sizes'].append(node_size)
-                
-                # Customize node color based on activation level
-                base_color = NODE_TYPES[node.type]['color']
-                conn_count = len(node.connections)
-                
-                # Color neurons based on activation
-                if node.activated:
-                    # Active neuron: bright glow based on activation
-                    glow = min(255, 100 + int(155 * node.activation_level))
-                    nodes_by_type[node.type]['colors'].append(
-                        f"rgba({glow}, {glow}, 255, 0.95)"
-                    )
-                elif node.last_fired < 5:
-                    # Recently fired: medium glow
-                    nodes_by_type[node.type]['colors'].append(
-                        f"rgba({min(255, int(conn_count * 15))}, 200, 255, 0.9)"
-                    )
-                else:
-                    # Inactive neuron: base color
-                    nodes_by_type[node.type]['colors'].append(base_color)
+                nodes_by_type[node.type]['sizes'].append(node.size/3)
+                nodes_by_type[node.type]['colors'].append(NODE_TYPES[node.type]['color'])
+                nodes_by_type[node.type]['text'].append(
+                    f"Node {node.id} ({node.type})<br>"
+                    f"Size: {node.size:.1f}<br>"
+                    f"Energy: {node.energy:.1f}<br>"
+                    f"Connections: {len(node.connections)}"
+                )
 
-                # Enhanced tooltip with more information
-                hover_text = (f"Node {node.id} ({node.type})<br>"
-                              f"Size: {node.size:.1f}<br>"
-                              f"Connections: {len(node.connections)}<br>"
-                              f"Age: {node.age}<br>"
-                              f"Firing Rate: {node.firing_rate:.2f}<br>"
-                              f"Active Signals: {len(node.signals)}")
-                nodes_by_type[node.type]['text'].append(hover_text)
-
+        # Add node traces
         for node_type, data in nodes_by_type.items():
             fig.add_trace(go.Scatter3d(
                 x=data['x'],
@@ -1008,24 +866,23 @@ class NeuralNetwork:
                 mode='markers',
                 marker=dict(
                     size=data['sizes'],
-                    color=data['colors'],
+                    color=NODE_TYPES[node_type]['color'],
                     opacity=0.9,
                     line=dict(width=1, color='rgb(40,40,40)'),
-                    symbol='circle',
                 ),
                 text=data['text'],
                 hoverinfo='text',
                 name=node_type
             ))
 
-        # Improved camera and layout settings for better visualization
+        # Update layout
         fig.update_layout(
             scene=dict(
                 xaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
                 yaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
                 zaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
                 bgcolor='rgba(240,248,255,0.8)',
-                aspectmode='cube',  # Equal aspect ratio
+                aspectmode='cube',
             ),
             margin=dict(l=0, r=0, b=0, t=30),
             scene_camera=dict(
@@ -1049,44 +906,55 @@ class NeuralNetwork:
     def _visualize_2d(self):
         """Create 2D visualization of the network."""
         fig = go.Figure()
-
         pos = {n.id: (n.position[0], n.position[1]) for n in self.nodes if n.visible}
 
+        # Draw edges
         for edge in self.graph.edges(data=True):
             u, v, data = edge
             if u in pos and v in pos:
                 x0, y0 = pos[u]
                 x1, y1 = pos[v]
-                weight = data['weight']
-
-                color = f'rgba({min(255, int(weight * 40))}, 100, {255 - min(255, int(weight * 40))}, {min(0.8, weight/5)})'
-
+                
+                # Get connection strength
+                strength = 0
+                if v in self.nodes[u].connections:
+                    strength = self.nodes[u].connections[v]
+                elif u in self.nodes[v].connections:
+                    strength = self.nodes[v].connections[u]
+                
+                # Create edge color based on strength
+                color = f'rgba({min(255, int(strength * 50))}, {100 + min(155, int(strength * 20))}, {255 - min(255, int(strength * 30))}, {min(0.9, 0.2 + strength/5)})'
+                
                 fig.add_trace(go.Scatter(
                     x=[x0, x1, None],
                     y=[y0, y1, None],
                     mode='lines',
-                    line=dict(width=min(8, weight/2), color=color),
-                    hoverinfo='none'
+                    line=dict(color=color, width=2),
+                    hoverinfo='text',
+                    hovertext=f'Strength: {strength:.2f}',
+                    showlegend=False
                 ))
 
+        # Draw nodes grouped by type
         nodes_by_type = {}
         for node in self.nodes:
-            if node.visible:
+            if node.visible and node.id in pos:
                 if node.type not in nodes_by_type:
                     nodes_by_type[node.type] = {
-                        'x': [], 'y': [], 'sizes': [], 'text': []
+                        'x': [], 'y': [],
+                        'sizes': [], 'text': []
                     }
-
+                
                 x, y = pos[node.id]
                 nodes_by_type[node.type]['x'].append(x)
                 nodes_by_type[node.type]['y'].append(y)
-                nodes_by_type[node.type]['sizes'].append(node.size/1.5)
-
-                hover_text = (f"Node {node.id} ({node.type})<br>"
-                              f"Size: {node.size:.1f}<br>"
-                              f"Connections: {len(node.connections)}<br>"
-                              f"Age: {node.age}")
-                nodes_by_type[node.type]['text'].append(hover_text)
+                nodes_by_type[node.type]['sizes'].append(node.size/2)
+                nodes_by_type[node.type]['text'].append(
+                    f"Node {node.id} ({node.type})<br>"
+                    f"Size: {node.size:.1f}<br>"
+                    f"Energy: {node.energy:.1f}<br>"
+                    f"Connections: {len(node.connections)}"
+                )
 
         for node_type, data in nodes_by_type.items():
             fig.add_trace(go.Scatter(
@@ -1096,8 +964,7 @@ class NeuralNetwork:
                 marker=dict(
                     size=data['sizes'],
                     color=NODE_TYPES[node_type]['color'],
-                    opacity=0.8,
-                    line=dict(width=1, color='rgb(50,50,50)')
+                    line=dict(width=1, color='rgb(40,40,40)'),
                 ),
                 text=data['text'],
                 hoverinfo='text',
@@ -1105,21 +972,22 @@ class NeuralNetwork:
             ))
 
         fig.update_layout(
+            title="Neural Network - 2D View",
             xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
             yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
             plot_bgcolor='rgba(240,240,240,0.8)',
-            margin=dict(l=0, r=0, b=0, t=30),
-            title="Neural Network Growth - 2D View",
-            showlegend=True
+            showlegend=True,
+            width=800,
+            height=600,
+            template="plotly_white"
         )
 
         return fig
 
     def get_stats_figure(self):
-        """Create a figure with network statistics over time."""
+        """Generate network statistics visualization."""
         if not self.stats['node_count']:
-            fig = make_subplots(rows=2, cols=2)
-            return fig
+            return None
 
         fig = make_subplots(
             rows=2, cols=2,
@@ -1128,37 +996,52 @@ class NeuralNetwork:
 
         steps = list(range(len(self.stats['node_count'])))
 
+        # Node counts
         fig.add_trace(
-            go.Scatter(x=steps, y=self.stats['node_count'], mode='lines', name='Total Nodes',
-                       line=dict(color='blue', width=2)),
+            go.Scatter(x=steps, y=self.stats['node_count'], 
+                      mode='lines', name='Total Nodes',
+                      line=dict(color='blue', width=2)),
             row=1, col=1
         )
         fig.add_trace(
-            go.Scatter(x=steps, y=self.stats['visible_nodes'], mode='lines', name='Visible Nodes',
-                       line=dict(color='green', width=2)),
+            go.Scatter(x=steps, y=self.stats['visible_nodes'],
+                      mode='lines', name='Active Nodes',
+                      line=dict(color='green', width=2)),
             row=1, col=1
         )
 
+        # Connection count
         fig.add_trace(
-            go.Scatter(x=steps, y=self.stats['connection_count'], mode='lines', name='Connections',
-                       line=dict(color='red', width=2)),
+            go.Scatter(x=steps, y=self.stats['connection_count'],
+                      mode='lines', name='Connections',
+                      line=dict(color='red', width=2)),
             row=1, col=2
         )
 
+        # Node type distribution
         for node_type in NODE_TYPES:
-            fig.add_trace(
-                go.Scatter(x=steps, y=self.stats['type_distribution'][node_type], mode='lines', 
-                           name=node_type, line=dict(color=NODE_TYPES[node_type]['color'])),
-                row=2, col=1
-            )
+            y_vals = self.stats['type_distribution'][node_type]
+            if any(y_vals):  # Only add if there are non-zero values
+                fig.add_trace(
+                    go.Scatter(x=steps, y=y_vals,
+                              mode='lines', name=node_type,
+                              line=dict(width=1)),
+                    row=2, col=1
+                )
 
+        # Average size
         fig.add_trace(
-            go.Scatter(x=steps, y=self.stats['avg_size'], mode='lines', name='Avg Size',
-                       line=dict(color='purple', width=2)),
+            go.Scatter(x=steps, y=self.stats['avg_size'],
+                      mode='lines', name='Avg Size',
+                      line=dict(color='purple', width=2)),
             row=2, col=2
         )
 
-        fig.update_layout(height=600, template='plotly_white', showlegend=True)
+        fig.update_layout(
+            height=600,
+            showlegend=True,
+            template='plotly_white'
+        )
 
         return fig
 
@@ -1177,7 +1060,7 @@ class NeuralNetwork:
         hours, remainder = divmod(runtime, 3600)
         minutes, seconds = divmod(remainder, 60)
 
-        summary = {
+        return {
             "simulation_steps": self.simulation_steps,
             "runtime": f"{int(hours)}h {int(minutes)}m {int(seconds)}s",
             "total_nodes": len(self.nodes),
@@ -1188,367 +1071,446 @@ class NeuralNetwork:
             "learning_rate": round(self.learning_rate, 3)
         }
 
-        return summary
-
     def save_state(self, filename=None):
-        """Save the current network state to a file."""
-        try:
-            directory = "network_saves"
-            if not os.path.exists(directory):
-                os.makedirs(directory, exist_ok=True)
-                
-            if filename is None:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"{directory}/network_state_{timestamp}.pkl"
+        """Save current network state to file."""
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"network_state_{timestamp}.pkl"
             
-            # Convert to a more pickle-friendly format
-            serializable_state = {
-                'nodes_data': [self._node_to_dict(node) for node in self.nodes],
-                'simulation_steps': self.simulation_steps,
-                'stats': self.stats,
-                'start_time': self.start_time,
-                'max_nodes': self.max_nodes,
-                'learning_rate': self.learning_rate
-            }
+        if not os.path.exists('network_saves'):
+            os.makedirs('network_saves')
             
-            with open(filename, 'wb') as f:
-                pickle.dump(serializable_state, f)
+        filepath = os.path.join('network_saves', filename)
+        
+        state = {
+            'nodes': [self._node_to_dict(node) for node in self.nodes],
+            'stats': self.stats,
+            'simulation_steps': self.simulation_steps,
+            'energy_pool': self.energy_pool,
+            'learning_rate': self.learning_rate
+        }
+        
+        with open(filepath, 'wb') as f:
+            pickle.dump(state, f)
             
-            # Save stats to CSV
-            stats_file = f"{directory}/stats_{timestamp}.csv"
-            with open(stats_file, 'w') as f:
-                f.write("Step,NodeCount,VisibleNodes,ConnectionCount,AvgSize")
-                for node_type in NODE_TYPES:
-                    f.write(f",{node_type}")
-                f.write("\n")
-                
-                for i in range(len(self.stats['node_count'])):
-                    f.write(f"{i},{self.stats['node_count'][i]},"
-                           f"{self.stats['visible_nodes'][i]},"
-                           f"{self.stats['connection_count'][i]},"
-                           f"{self.stats['avg_size'][i]:.2f}")
-                           
-                    for node_type in NODE_TYPES:
-                        if i < len(self.stats['type_distribution'][node_type]):
-                            f.write(f",{self.stats['type_distribution'][node_type][i]}")
-                        else:
-                            f.write(",0")
-                            
-                    f.write("\n")
-            
-            st.success(f"Network saved to {filename}")
-            return filename
-        except Exception as e:
-            st.error(f"Error saving network: {str(e)}")
-            return None
-    
+        return filepath
+
     def _node_to_dict(self, node):
-        """Convert a node object to a serializable dictionary."""
+        """Convert node to serializable dictionary."""
         return {
             'id': node.id,
             'type': node.type,
-            'connections': node.connections,
-            'size': node.size,
-            'firing_rate': node.firing_rate,
             'visible': node.visible,
-            'memory': node.memory,
-            'age': node.age,
-            'last_fired': node.last_fired,
-            'max_connections': node.max_connections,
-            'connection_attempts': node.connection_attempts,
-            'successful_connections': node.successful_connections,
             'position': node.position,
             'velocity': node.velocity,
-            'cycle_counter': getattr(node, 'cycle_counter', 0),
-            'last_targets': list(getattr(node, 'last_targets', set()))
+            'size': node.size,
+            'energy': node.energy,
+            'connections': dict(node.connections),
+            'memory': node.memory,
+            'age': node.age
         }
-    
+
     def _dict_to_node(self, data):
-        """Convert a dictionary back to a node object."""
-        node = Node(data['id'], node_type=data['type'], visible=data['visible'], 
-                   max_connections=data['max_connections'])
-        
-        node.size = data['size']
-        node.firing_rate = data['firing_rate']
-        node.connections = data['connections']
-        node.memory = data['memory']
-        node.age = data['age']
-        node.last_fired = data['last_fired']
-        node.connection_attempts = data['connection_attempts']
-        node.successful_connections = data['successful_connections']
+        """Create node from dictionary data."""
+        node = Node(
+            node_id=data['id'],
+            node_type=data['type'],
+            visible=data['visible']
+        )
         node.position = data['position']
         node.velocity = data['velocity']
-        
-        # Handle optional attributes
-        node.cycle_counter = data.get('cycle_counter', 0)
-        node.last_targets = set(data.get('last_targets', []))
-        
+        node.size = data['size']
+        node.energy = data['energy']
+        node.connections = dict(data['connections'])
+        node.memory = data['memory']
+        node.age = data['age']
         return node
 
     @classmethod
     def load_state(cls, filename):
-        """Load network state from a file."""
-        try:
-            with open(filename, 'rb') as f:
-                state = pickle.load(f)
+        """Load network state from file."""
+        filepath = os.path.join('network_saves', filename)
+        with open(filepath, 'rb') as f:
+            state = pickle.load(f)
             
-            # Check if this is the new format or old format
-            if 'nodes_data' in state:
-                # New format
-                network = cls(max_nodes=state['max_nodes'])
-                network.nodes = [network._dict_to_node(node_data) for node_data in state['nodes_data']]
-                network.simulation_steps = state['simulation_steps']
-                network.stats = state['stats']
-                network.start_time = state['start_time']
-                network.learning_rate = state.get('learning_rate', 0.1)
-            else:
-                # Old format (for backwards compatibility)
-                network = cls(max_nodes=state['max_nodes'])
-                network.nodes = state['nodes']
-                network.simulation_steps = state['simulation_steps']
-                network.stats = state['stats']
-                network.start_time = state['start_time']
-                network.learning_rate = state.get('learning_rate', 0.1)
-            
-            network.update_graph()
-            st.success(f"Network loaded from {filename}")
-            return network
-        except Exception as e:
-            st.error(f"Error loading network: {str(e)}")
-            return cls()
+        network = cls(max_nodes=200)
+        network.nodes = [network._dict_to_node(data) for data in state['nodes']]
+        network.stats = state['stats']
+        network.simulation_steps = state['simulation_steps']
+        network.energy_pool = state['energy_pool']
+        network.learning_rate = state['learning_rate']
+        
+        return network
 
 class NetworkSimulator:
     def __init__(self, network=None, max_nodes=200):
-        """Initialize the simulator with a network."""
-        self.network = network if network else NeuralNetwork(max_nodes=max_nodes)
+        self.network = network or NeuralNetwork(max_nodes=max_nodes)
         self.running = False
-        self.simulation_thread = None
-        self.result_queue = queue.Queue()
         self.command_queue = queue.Queue()
+        self.last_step = time.time()
         self.steps_per_second = 1.0
-
+        self.thread = None
+        self.lock = threading.Lock()
+    
     def start(self, steps_per_second=1.0):
-        """Start the simulation in a background thread."""
+        """Start the simulation in a separate thread."""
+        if self.running:
+            return
+        
         self.steps_per_second = steps_per_second
-        if not self.running:
-            self.running = True
-            self.simulation_thread = threading.Thread(target=self._run_simulation)
-            self.simulation_thread.daemon = True
-            self.simulation_thread.start()
-            print(f"Simulation started at {steps_per_second} steps per second")
+        self.running = True
+        self.thread = threading.Thread(target=self._run_simulation)
+        self.thread.daemon = True
+        self.thread.start()
 
     def stop(self):
-        """Stop the simulation."""
+        """Stop the simulation thread."""
         self.running = False
-        if self.simulation_thread:
-            self.simulation_thread.join(timeout=0.5)
-            print("Simulation stopped")
+        if self.thread:
+            self.thread.join(timeout=1.0)
+            self.thread = None
 
     def _run_simulation(self):
-        """Run the simulation continuously."""
-        last_step_time = time.time()
-
+        """Main simulation loop."""
         while self.running:
-            self._process_commands()
-
             current_time = time.time()
-            elapsed = current_time - last_step_time
-
+            elapsed = current_time - self.last_step
+            
             if elapsed >= 1.0 / self.steps_per_second:
-                self.network.step()
-                last_step_time = current_time
-
-                self.result_queue.put({
-                    'steps': self.network.simulation_steps,
-                    'active_nodes': len([n for n in self.network.nodes if n.visible]),
-                    'total_nodes': len(self.network.nodes),
-                    'connections': sum(len(n.connections) for n in self.network.nodes)
-                })
-
-            time.sleep(0.01)
+                with self.lock:
+                    self.network.step()
+                    self._process_commands()
+                self.last_step = current_time
+            
+            time.sleep(0.001)  # Prevent busy waiting
 
     def _process_commands(self):
-        """Process commands from the command queue."""
-        try:
-            while not self.command_queue.empty():
+        """Process any pending commands."""
+        while not self.command_queue.empty():
+            try:
                 cmd = self.command_queue.get_nowait()
+                self._handle_command(cmd)
+            except queue.Empty:
+                break
 
-                if cmd['type'] == 'set_speed':
-                    self.steps_per_second = cmd['value']
-                elif cmd['type'] == 'set_learning_rate':
-                    self.network.learning_rate = cmd['value']
-                elif cmd['type'] == 'add_node':
-                    self.network.add_node(
-                        visible=cmd.get('visible', True),
-                        node_type=cmd.get('node_type', None)
-                    )
-                elif cmd['type'] == 'save':
-                    self.network.save_state(cmd.get('filename', None))
-
-                self.command_queue.task_done()
-        except queue.Empty:
-            pass
+    def _handle_command(self, cmd):
+        """Handle a single command."""
+        cmd_type = cmd.get('type')
+        if cmd_type == 'add_node':
+            self.network.add_node(
+                visible=cmd.get('visible', True),
+                node_type=cmd.get('node_type'),
+                max_connections=cmd.get('max_connections', 15)
+            )
+        elif cmd_type == 'set_speed':
+            self.steps_per_second = cmd['value']
+        elif cmd_type == 'set_learning_rate':
+            self.network.learning_rate = cmd['value']
 
     def send_command(self, command):
-        """Send a command to the simulation thread."""
+        """Add a command to the queue."""
         self.command_queue.put(command)
 
     def get_latest_results(self):
-        """Get the latest results from the simulation thread."""
-        results = []
-        try:
-            while not self.result_queue.empty():
-                results.append(self.result_queue.get_nowait())
-                self.result_queue.task_done()
-        except queue.Empty:
-            pass
-
-        return results if results else None
+        """Get current network state."""
+        with self.lock:
+            return {
+                'nodes': len(self.network.nodes),
+                'active': sum(1 for n in self.network.nodes if n.visible),
+                'connections': sum(len(n.connections) for n in self.network.nodes),
+                'steps': self.network.simulation_steps
+            }
 
     def save(self, filename=None):
-        """Save the current network state."""
-        return self.network.save_state(filename)
+        """Save current network state."""
+        with self.lock:
+            return self.network.save_state(filename)
 
     @classmethod
     def load(cls, filename):
-        """Load a simulator from a saved file."""
+        """Load network from saved state."""
         network = NeuralNetwork.load_state(filename)
         return cls(network=network)
 
-# Helper functions for the application
+# Helper functions for file operations
 def list_saved_simulations(directory='network_saves'):
     """List all available saved simulations."""
     if not os.path.exists(directory):
-        return []
-
+        os.makedirs(directory)
+    
     files = [f for f in os.listdir(directory) if f.startswith('network_state_') and f.endswith('.pkl')]
     files.sort(reverse=True)
-
+    
     return [os.path.join(directory, f) for f in files]
 
 def parse_contents(contents, filename):
     """Parse uploaded file contents."""
     if contents is None:
         return None
-
+    
     content_type, content_string = contents.split(',')
     decoded = base64.b64decode(content_string)
-
+    
     try:
-        if 'pkl' in filename:
-            temp_file = f"temp_{int(time.time())}.pkl"
-            with open(temp_file, 'wb') as f:
-                f.write(decoded)
-            return temp_file
+        if filename.endswith('.pkl'):
+            return pickle.loads(decoded)
+        else:
+            st.error(f"Unsupported file type: {filename}")
     except Exception as e:
-        print(f"Error processing file: {e}")
-
+        st.error(f"Error loading file: {str(e)}")
+    
     return None
 
-# Streamlit app
+# Streamlit UI code
+def create_ui():
+    """Create the main Streamlit UI."""
+    # Initialize session state
+    if 'simulation_running' not in st.session_state:
+        st.session_state.simulation_running = False
+    if 'simulator' not in st.session_state:
+        st.session_state.simulator = NetworkSimulator()
+        st.session_state.simulator.network.add_node(visible=True)
+    if 'update_interval' not in st.session_state:
+        st.session_state.update_interval = 0.3
+    if 'last_update' not in st.session_state:
+        st.session_state.last_update = time.time()
+    if 'frame_count' not in st.session_state:
+        st.session_state.frame_count = 0
+
+    # Create display containers
+    viz_container = st.empty()
+    stats_container = st.empty()
+    
+    # Sidebar controls
+    with st.sidebar:
+        st.header("Simulation Controls")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("▶️ Start", key="start_sim"):
+                if not st.session_state.simulation_running:
+                    st.session_state.simulation_running = True
+                    st.session_state.simulator.start(
+                        steps_per_second=st.session_state.get('speed', 1.0)
+                    )
+        
+        with col2:
+            if st.button("⏸️ Pause", key="stop_sim"):
+                if st.session_state.simulation_running:
+                    st.session_state.simulation_running = False
+                    st.session_state.simulator.stop()
+        
+        if st.button("🔄 Reset", key="reset_sim"):
+            st.session_state.simulator.stop()
+            st.session_state.simulator = NetworkSimulator()
+            st.session_state.simulator.network.add_node(visible=True)
+            st.session_state.simulation_running = False
+        
+        # Simulation parameters
+        st.header("Parameters")
+        speed = st.slider("Simulation Speed", 0.2, 10.0, 1.0, 0.2)
+        learning_rate = st.slider("Learning Rate", 0.01, 0.5, 0.1, 0.01)
+        
+        if st.session_state.simulation_running:
+            st.session_state.simulator.send_command({
+                "type": "set_speed",
+                "value": speed
+            })
+            st.session_state.simulator.send_command({
+                "type": "set_learning_rate",
+                "value": learning_rate
+            })
+        
+        # Node management
+        st.header("Node Management")
+        node_type = st.selectbox("Add Node Type", list(NODE_TYPES.keys()))
+        if st.button("➕ Add Node"):
+            st.session_state.simulator.send_command({
+                "type": "add_node",
+                "visible": True,
+                "node_type": node_type
+            })
+
+        # Save/Load functionality
+        st.header("Save / Load")
+        if st.button("💾 Save Network"):
+            filename = st.session_state.simulator.save()
+            st.success(f"Saved to {filename}")
+        
+        saved_files = list_saved_simulations()
+        if saved_files:
+            selected_file = st.selectbox("Select Network", saved_files)
+            if st.button("📂 Load Network"):
+                st.session_state.simulator = NetworkSimulator.load(selected_file)
+
+    return viz_container, stats_container
+
+# Initialize the app
 st.set_page_config(page_title="Neural Network Simulation", layout="wide")
 st.title("Neural Network Growth Simulation")
 
-# Use session state to track the simulation state
-if 'simulation_running' not in st.session_state:
-    st.session_state.simulation_running = False
-if 'simulator' not in st.session_state:
-    st.session_state.simulator = NetworkSimulator()
-    st.session_state.simulator.network.add_node(visible=True)
-if 'update_interval' not in st.session_state:
-    st.session_state.update_interval = 0.3  # Update interval in seconds
-if 'last_update' not in st.session_state:
-    st.session_state.last_update = time.time()
-if 'frame_count' not in st.session_state:
-    st.session_state.frame_count = 0
-
-# Create containers for our visualization
-viz_container = st.empty()
-stats_container = st.empty()
-summary_container = st.empty()
-
-# Sidebar controls with improved UI
-st.sidebar.header("Simulation Controls")
-col1, col2 = st.sidebar.columns(2)
-
-with col1:
-    start_button = st.button("▶️ Start", key="start_sim")
-with col2:
-    stop_button = st.button("⏸️ Pause", key="stop_sim")
-
-if start_button:
-    if not st.session_state.simulation_running:
-        st.session_state.simulator.start(steps_per_second=st.session_state.get('speed', 1.0))
-        st.session_state.simulation_running = True
-        st.sidebar.success("Simulation running!")
-
-if stop_button:
-    if st.session_state.simulation_running:
-        st.session_state.simulator.stop()
-        st.session_state.simulation_running = False
-        st.sidebar.warning("Simulation paused")
-
-if st.sidebar.button("🔄 Reset", key="reset_sim"):
-    st.session_state.simulator.stop()
-    st.session_state.simulator = NetworkSimulator()
-    st.session_state.simulator.network.add_node(visible=True)
-    st.session_state.simulation_running = False
-    st.sidebar.error("Simulation reset")
-
-# Simulation parameters
-st.sidebar.header("Simulation Parameters")
-st.session_state.speed = st.sidebar.slider("Simulation Speed", min_value=0.2, max_value=10.0, value=st.session_state.get('speed', 1.0), step=0.2)
-learning_rate = st.sidebar.slider("Learning Rate", min_value=0.01, max_value=0.5, value=0.1, step=0.01)
-
-# Visualization settings
-st.sidebar.header("Visualization Settings")
+# Create refresh placeholder and viz mode selector
+refresh_placeholder = st.empty()
 viz_mode = st.sidebar.radio("Visualization Mode", options=["3d", "2d"], index=0)
-update_freq = st.sidebar.slider("Display Refresh Rate (fps)", 1, 30, 10, 1)
-st.session_state.update_interval = 1.0 / update_freq
 
-# Apply settings to running simulation
-if st.session_state.simulation_running:
-    st.session_state.simulator.send_command({"type": "set_speed", "value": st.session_state.speed})
-    st.session_state.simulator.send_command({"type": "set_learning_rate", "value": learning_rate})
+# Create and run the UI
+viz_container, stats_container = create_ui()
 
-# Node Management
-st.sidebar.header("Node Management")
-node_type_options = list(NODE_TYPES.keys())
-selected_type = st.sidebar.selectbox("Add Node Type", options=node_type_options)
-if st.sidebar.button("➕ Add Node"):
-    st.session_state.simulator.send_command({
-        "type": "add_node", 
-        "visible": True,
-        "node_type": selected_type
-    })
-    st.sidebar.success(f"Added {selected_type} node")
+# Main update loop
+if st.session_state.animation_enabled and st.session_state.simulation_running:
+    current_time = time.time()
+    elapsed = current_time - st.session_state.last_update
+    
+    if elapsed > st.session_state.update_interval:
+        update_display()
+        st.session_state.last_update = current_time
+        st.session_state.frame_count += 1
+    
+    time.sleep(0.05)
+    st.rerun()
+else:
+    with refresh_placeholder.container():
+        if st.button("🔄 Refresh View"):
+            update_display()
 
-# Save/Load
-st.sidebar.header("Save / Load")
-if st.sidebar.button("💾 Save Network"):
-    filename = st.session_state.simulator.save()
-    st.sidebar.success(f"Network saved to {filename}")
+# Create requirements.txt if needed
+if not os.path.exists("requirements.txt"):
+    create_requirements_file()
 
-saved_files = list_saved_simulations()
-if saved_files:
-    selected_file = st.sidebar.selectbox("Select Network", options=saved_files)
-    if st.sidebar.button("📂 Load Network"):
-        st.session_state.simulator.stop()
-        new_simulator = NetworkSimulator.load(selected_file)
-        st.session_state.simulator = new_simulator
-        st.session_state.simulation_running = False
-        st.sidebar.success(f"Loaded network from {selected_file}")
+def _update_node_signals(node):
+    """Update signal progress and handle completed signals."""
+    for signal in list(node.signals):
+        signal['progress'] = min(1.0, signal['progress'] + 0.05)
+        signal['duration'] -= 1
 
-# Main display section - continuously updates
-def _ensure_node_signals():
-    """Make sure all nodes have the signals attribute"""
-    for node in st.session_state.simulator.network.nodes:
-        if not hasattr(node, 'signals'):
-            node.signals = []
-        if not hasattr(node, 'activation_level'):
-            node.activation_level = 0.0
-        if not hasattr(node, 'activated'):
-            node.activated = False
+        if signal['progress'] >= 1.0 or signal['duration'] <= 0:
+            node.signals.remove(signal)
+        elif 'target_id' in signal:
+            target = next((n for n in self.nodes if n.id == signal['target_id']), None)
+            if target:
+                target.activation_level = max(target.activation_level, signal['strength'])
+
+def _apply_hebbian_learning(self, node):
+    """Apply Hebbian learning to strengthen frequently used connections."""
+    if not node.connections or len(node.connections) < 2:
+        return
+
+    target_id = random.choice(list(node.connections.keys()))
+    target = next((n for n in self.nodes if n.id == target_id), None)
+    if not target or not target.visible:
+        return
+
+    common = set(node.connections.keys()) & set(target.connections.keys())
+    if not common:
+        return
+
+    for common_id in common:
+        if common_id == node.id or common_id == target_id:
+            continue
+        boost = node.genes['learning_rate'] * (1 + self.reward_state)
+        node.connections[common_id] *= (1 + boost)
+        target.connections[common_id] *= (1 + boost)
+
+def _distribute_energy(self):
+    """Distribute energy from pool to nodes."""
+    if not self.nodes:
+        return
+        
+    self.energy_pool = min(1000.0, self.energy_pool + 5.0)
+    active_nodes = [n for n in self.nodes if n.visible]
+    if not active_nodes:
+        return
+        
+    avg_energy = sum(n.energy for n in active_nodes) / len(active_nodes)
+    if avg_energy > 40:
+        self.energy_pool = min(1000.0, self.energy_pool + 20.0)
+        
+    energy_per_node = min(10.0, self.energy_pool / len(active_nodes))
+    for node in active_nodes:
+        if node.energy < 70:
+            transfer = energy_per_node * 0.5
+            node.energy += transfer
+            self.energy_pool -= transfer
+            if self.energy_pool <= 0:
+                break
+
+def _trigger_shock_event(self):
+    """Trigger network-wide shock event."""
+    active_nodes = [n for n in self.nodes if n.visible]
+    if not active_nodes:
+        return
+        
+    shock_count = max(1, int(len(active_nodes) * random.uniform(0.1, 0.3)))
+    shocked_nodes = random.sample(active_nodes, shock_count)
+    
+    for node in shocked_nodes:
+        node.energy += 20
+        node.size = min(node.size + 5, node.properties['size_range'][1] * 1.5)
+        node.burst_mode = True
+        node.burst_counter = random.randint(2, 5)
+        
+    self.shock_countdown = random.randint(40, 100)
+
+def get_stats_figure(self):
+    """Generate network statistics visualization."""
+    if not self.stats['node_count']:
+        return None
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=("Node Growth", "Connection Growth", "Node Types", "Average Size")
+    )
+
+    steps = list(range(len(self.stats['node_count'])))
+
+    # Node counts
+    fig.add_trace(
+        go.Scatter(x=steps, y=self.stats['node_count'], 
+                  mode='lines', name='Total Nodes',
+                  line=dict(color='blue', width=2)),
+        row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(x=steps, y=self.stats['visible_nodes'],
+                  mode='lines', name='Active Nodes',
+                  line=dict(color='green', width=2)),
+        row=1, col=1
+    )
+
+    # Connection count
+    fig.add_trace(
+        go.Scatter(x=steps, y=self.stats['connection_count'],
+                  mode='lines', name='Connections',
+                  line=dict(color='red', width=2)),
+        row=1, col=2
+    )
+
+    # Node type distribution
+    for node_type in NODE_TYPES:
+        y_vals = self.stats['type_distribution'][node_type]
+        if any(y_vals):  # Only add if there are non-zero values
+            fig.add_trace(
+                go.Scatter(x=steps, y=y_vals,
+                          mode='lines', name=node_type,
+                          line=dict(width=1)),
+                row=2, col=1
+            )
+
+    # Average size
+    fig.add_trace(
+        go.Scatter(x=steps, y=self.stats['avg_size'],
+                  mode='lines', name='Avg Size',
+                  line=dict(color='purple', width=2)),
+        row=2, col=2
+    )
+
+    fig.update_layout(
+        height=600,
+        showlegend=True,
+        template='plotly_white'
+    )
+
+    return fig
 
 def update_display():
     """Update the visualization with unique keys for each Plotly chart."""
@@ -1557,105 +1519,120 @@ def update_display():
     
     # Main visualization
     with viz_container.container():
-        st.header("Neural Network Visualization")
-        fig = st.session_state.simulator.network.visualize(mode=viz_mode)
-        st.plotly_chart(fig, use_container_width=True, key="network_viz")
-
-    # Network statistics
-    with stats_container.container():
-        st.header("Network Statistics")
-        stats_fig = st.session_state.simulator.network.get_stats_figure()
-        st.plotly_chart(stats_fig, use_container_width=True, key="stats_viz")
-
-    # Network summary
-    with summary_container.container():
-        col1, col2 = st.columns(2)
-        with col1:
-            st.header("Network Summary")
-            summary = st.session_state.simulator.network.get_network_summary()
-            st.json(summary, expanded=False)
-        with col2:
-            st.header("Information Transfer")
+        viz_tabs = st.tabs(["Network", "Activity", "Stats"])
+        
+        with viz_tabs[0]:
+            st.header("Neural Network")
+            network_fig = st.session_state.simulator.network.visualize(mode=viz_mode)
+            st.plotly_chart(network_fig, use_container_width=True, key="network_viz")
             
-            # Count active signals in the network
-            active_signals = sum(len(getattr(node, 'signals', [])) for node in st.session_state.simulator.network.nodes if node.visible)
-            st.metric("Active Signals", active_signals, help="Number of information signals traveling between neurons")
+        with viz_tabs[1]:
+            st.header("Neural Activity")
+            activity_fig = st.session_state.simulator.network.get_activity_heatmap()
+            st.plotly_chart(activity_fig, use_container_width=True, key="activity_viz")
             
-            # Count active neurons
-            active_neurons = sum(1 for node in st.session_state.simulator.network.nodes 
-                               if node.visible and hasattr(node, 'activated') and node.activated)
-            st.metric("Active Neurons", active_neurons, help="Number of currently activated neurons")
-            
-            # Show simulation status
-            status = "Running" if st.session_state.simulation_running else "Paused"
-            st.info(f"Simulation Status: {status}")
-            
-            # Add a "neural pathway strength" meter
-            if active_neurons > 0:
-                # Calculate average connection strength among active neurons
-                active_node_ids = [node.id for node in st.session_state.simulator.network.nodes 
-                                  if node.visible and hasattr(node, 'activated') and node.activated]
-                pathway_strengths = []
-                
-                for node in st.session_state.simulator.network.nodes:
-                    if node.visible and hasattr(node, 'activated') and node.activated:
-                        for conn_id, strength in node.connections.items():
-                            if conn_id in active_node_ids:
-                                pathway_strengths.append(strength)
-                
-                if pathway_strengths:
-                    avg_pathway = sum(pathway_strengths) / len(pathway_strengths)
-                    st.progress(min(1.0, avg_pathway / 5.0), 
-                               text=f"Neural Pathway Strength: {avg_pathway:.2f}")
+        with viz_tabs[2]:
+            st.header("Network Statistics")
+            stats_fig = st.session_state.simulator.network.get_stats_figure()
+            if stats_fig:
+                st.plotly_chart(stats_fig, use_container_width=True, key="stats_viz")
 
-# Initial display
-update_display()
+    # Network summary in sidebar
+    with st.sidebar:
+        st.header("Network Summary")
+        summary = st.session_state.simulator.network.get_network_summary()
+        
+        st.metric("Total Nodes", summary["total_nodes"])
+        st.metric("Active Nodes", summary["visible_nodes"])
+        st.metric("Total Connections", summary["total_connections"])
+        
+        # Node type distribution
+        st.subheader("Node Types")
+        for node_type, count in summary["node_types"].items():
+            if count > 0:
+                st.text(f"{node_type}: {count}")
 
-# Create a placeholder for the refresh button
-refresh_placeholder = st.empty()
+# ...rest of existing code...
 
-# Improve animation performance by using statefulness instead of constant reruns
-if 'animation_enabled' not in st.session_state:
-    st.session_state.animation_enabled = True
-
-# Create a checkbox for enabling/disabling animation
-st.sidebar.header("Animation Settings")
-animation_enabled = st.sidebar.checkbox("Enable Auto-Refresh", value=st.session_state.animation_enabled)
-st.session_state.animation_enabled = animation_enabled
-
-# Auto-refresh mechanism for continuous updates
-if st.session_state.animation_enabled and st.session_state.simulation_running:
-    # Add a frame rate counter in the corner
-    st.sidebar.markdown(f"**Frame: {st.session_state.frame_count}**")
-    
-    # Schedule the next update with a more efficient approach
-    current_time = time.time()
-    elapsed = current_time - st.session_state.last_update
-    if elapsed > st.session_state.update_interval:
-        # Update the display only when interval has passed
-        st.session_state.last_update = current_time
-        st.session_state.frame_count += 1
-    
-    # Always rerun when simulation is active, but with a small delay
-    # to prevent excessive CPU usage
-    time.sleep(0.05)
-    st.rerun()  # Use st.rerun() instead of st.experimental_rerun()
-else:
-    # When paused or animation disabled, provide a manual refresh option
-    with refresh_placeholder.container():
-        if st.button("🔄 Refresh View", key="manual_refresh"):
-            update_display()
-            st.session_state.frame_count += 1
-
-# Helper file creating function
 def create_requirements_file():
-    """Create requirements.txt file for Streamlit deployment."""
+    """Create requirements.txt file with dependencies."""
+    requirements = [
+        "streamlit>=1.13.0",
+        "numpy>=1.19.0",
+        "networkx>=2.5",
+        "plotly>=4.14.0",
+        "scipy>=1.6.0"
+    ]
+    
     with open("requirements.txt", "w") as f:
-        f.write("numpy>=1.19.0\n")
-        f.write("networkx>=2.5\n")
-        f.write("plotly>=4.14.0\n")
-        f.write("streamlit>=1.13.0\n")
+        f.write("\n".join(requirements))
 
-# Automatically create requirements.txt if it doesn't exist
+# ...rest of existing code...
+
+def _ensure_node_signals():
+    """Ensure all nodes have required signal attributes."""
+    for node in st.session_state.simulator.network.nodes:
+        if not hasattr(node, 'signals'):
+            node.signals = []
+        if not hasattr(node, 'activation_level'):
+            node.activation_level = 0.0
+        if not hasattr(node, 'activated'):
+            node.activated = False
+
+def _initialize_network():
+    """Initialize network with basic configuration."""
+    if 'simulator' not in st.session_state:
+        st.session_state.simulator = NetworkSimulator()
+        initial_node = st.session_state.simulator.network.add_node(
+            visible=True, 
+            node_type='explorer'
+        )
+        initial_node.energy = 100.0
+
+def _handle_simulation_commands():
+    """Process simulation commands from UI."""
+    if st.session_state.simulation_running:
+        if hasattr(st.session_state, 'speed'):
+            st.session_state.simulator.send_command({
+                "type": "set_speed",
+                "value": st.session_state.speed
+            })
+
+def _update_visualization():
+    """Update network visualization state."""
+    if not hasattr(st.session_state, 'animation_enabled'):
+        st.session_state.animation_enabled = True
+        
+    current_time = time.time()
+    if hasattr(st.session_state, 'last_update'):
+        elapsed = current_time - st.session_state.last_update
+        if elapsed > st.session_state.update_interval:
+            update_display()
+            st.session_state.last_update = current_time
+            if hasattr(st.session_state, 'frame_count'):
+                st.session_state.frame_count += 1
+
+# Modify the main Streamlit app section
+st.set_page_config(page_title="Neural Network Simulation", layout="wide")
+st.title("Neural Network Growth Simulation")
+
+# Initialize network if needed
+_initialize_network()
+
+# Create UI components
+viz_container, stats_container = create_ui()
+
+# Main simulation and visualization loop
+if st.session_state.animation_enabled and st.session_state.simulation_running:
+    _handle_simulation_commands()
+    _update_visualization()
+    time.sleep(0.05)
+    st.rerun()
+else:
+    with st.empty():
+        if st.button("🔄 Refresh View"):
+            update_display()
+
+# Create requirements file if needed
 if not os.path.exists("requirements.txt"):
     create_requirements_file()
