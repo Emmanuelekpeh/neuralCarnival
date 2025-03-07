@@ -4,11 +4,30 @@ import pickle
 import time
 import threading
 import queue
-import numpy as np
-import networkx as nx
-import plotly.graph_objects as go
+# Import dependencies with error handling
+try:
+    import numpy as np
+except ImportError:
+    import streamlit as st
+    st.error("Missing dependency: numpy. Please install it with 'pip install numpy'")
+    st.stop()
+    
+try:
+    import networkx as nx
+except ImportError:
+    import streamlit as st
+    st.error("Missing dependency: networkx. Please install it with 'pip install networkx'")
+    st.stop()
+
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+except ImportError:
+    import streamlit as st
+    st.error("Missing dependency: plotly. Please install it with 'pip install plotly'")
+    st.stop()
+    
 import streamlit as st
-from plotly.subplots import make_subplots
 import base64
 from datetime import datetime
 
