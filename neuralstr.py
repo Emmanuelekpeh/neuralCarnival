@@ -54,175 +54,6 @@ NODE_TYPES = {
     # ...add other node types as needed...
 }
 
-def _initialize_session_state():
-    """Initialize all session state variables."""
-    initial_states = {
-        'simulation_running': False,
-        'viz_mode': '3d',
-        'auto_node_generation': True,
-        'node_generation_rate': 0.05,
-        'max_nodes': 200,
-        'display_update_interval': 0.5,
-        'frame_count': 0,
-        'animation_enabled': True,
-        'simulation_speed': 1.0,
-        'last_update': time.time(),
-        'last_display_update': time.time(),
-        'show_tendrils': True,
-        'tendril_duration': 30,
-        'refresh_rate': 5,
-        'cached_frame': -1,
-        'use_dark_mode': False,
-        'force_refresh': False,
-        'last_visual_refresh': 0,
-        'last_viz_mode': '3d',
-        'display_container': None,
-        'viz_error_count': 0,
-        'last_render_time': time.time(),
-        'buffered_rendering': True,
-        'render_interval': 0.5,
-        'render_frequency': 5,
-        'initialized': True  # Add flag to prevent double initialization
-    }
-    
-    for key, value in initial_states.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-# Initialize session state before anything else
-if not st.session_state.get('initialized', False):
-    _initialize_session_state()
-    # Initialize simulator after session state is set up
-    if 'simulator' not in st.session_state:
-        st.session_state.simulator = NetworkSimulator()
-        # Start with just a few seed nodes
-        for _ in range(3):
-            st.session_state.simulator.network.add_node(visible=True)
-
-# GPU status indicator - after initialization
-if cp is not None:
-    st.sidebar.success("🚀 GPU acceleration enabled")
-else:
-    st.sidebar.warning("⚠️ Running in CPU-only mode")
-
-# Rest of the classes and functions
-class Node:
-    def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
-        """Initialize a node with given properties."""
-        if not node_type:
-            # Fix: Make sure weights match NODE_TYPES length
-            node_types = list(NODE_TYPES.keys())
-            weights = [1.0] * len(node_types)  # Equal weights for all types
-            node_type = random.choices(node_types, weights=weights)[0]
-        
-        self.id = node_id
-        self.type = node_type
-        self.properties = NODE_TYPES[node_type]
-        self.connections = {}
-        
-        # Initialize properties based on node type
-        min_size, max_size = self.properties['size_range']
-        self.size = random.uniform(min_size, max_size)
-        
-        min_rate, max_rate = self.properties['firing_rate']
-        self.firing_rate = random.uniform(min_rate, max_rate)
-        
-        # ...rest of initialization code...
-
-    def connect(self, other_node):
-        strength = self.properties['connection_strength']
-        if len(self.connections) < self.max_connections:
-            if other_node.id not in self.connections:
-                self.connections[other_node.id] = strength
-
-    def weaken_connections(self):
-        pass
-
-    def attempt_resurrection(self):
-        """Try to resurrect a dead node."""
-        if not self.visible and random.random() < self.properties['resurrection_chance']:
-            self.visible = True
-            self.energy = 50.0
-            self.size *= 0.8
-            self.connections.clear()
-            return True
-        return False
-
-    def update_position(self, network):
-        """Update node's 3D position based on forces."""
-        if not self.visible:
-            return
-        # Add slight random movement
-        for i in range(3):
-            self.velocity[i] += random.uniform(-0.01, 0.01)
-            self.velocity[i] = max(-0.1, min(0.1, self.velocity[i]))
-            self.position[i] += self.velocity[i]
-        # Keep within bounds
-        for i in range(3):
-            if abs(self.position[i]) > 10:
-                self.position[i] = 10 * (1 if self.position[i] > 0 else -1)
-                self.velocity[i] *= -0.5
-
-    def process_signals(self, network):
-        """Process and update node signals and tendrils."""
-        # Update activation level decay
-        if self.activated:
-            self.activation_level *= 0.95
-            if self.activation_level < 0.05:
-                self.activated = False
-                self.activation_level = 0.0
-                
-        # Update signal progress and handle completions
-        for signal in list(self.signals):
-            signal['progress'] = min(1.0, signal['progress'] + 0.05)
-            signal['duration'] -= 1
-            if signal['progress'] >= 1.0 or signal['duration'] <= 0:
-                self.signals.remove(signal)
-                continue
-            # Handle special signal types based on node type
-            if self.type == 'memory' and random.random() < 0.3:
-                signal['duration'] += 1
-            elif self.type == 'catalyst':
-                signal['strength'] *= 1.05
-                
-        # Update tendril progress
-        for tendril in list(self.signal_tendrils):
-            tendril['progress'] = min(1.0, tendril['progress'] + 0.03)
-            tendril['duration'] -= 1
-            if tendril['progress'] >= 1.0 or tendril['duration'] <= 0:
-                self.signal_tendrils.remove(tendril)
-
-    def backpropagate(self, target_value=None, upstream_gradient=None):
-        """Implement backpropagation for learning."""
-        if self.layer_type == 'output' and target_value is not None:
-            # For output nodes, compute initial gradient
-            error = self.activation_level - target_value
-            self.gradient = error * self._activation_derivative()
-        elif upstream_gradient is not None:
-            # For hidden nodes, use upstream gradient
-            self.gradient = upstream_gradient * self._activation_derivative()
-        # Update weights using gradient
-        learning_rate = self.genes['learning_rate'] * (1 + self.neuromodulators['dopamine'])
-        for conn_id, strength in self.connections.items():
-            weight_update = -learning_rate * self.gradient * strength
-            self.weights_gradient[conn_id] = weight_update
-
-    def _activation_derivative(self):
-        """Compute derivative of activation function."""
-        x = self.activation_level
-        return x * (1 - x)  # Derivative of sigmoid
-
-    def update_neuromodulators(self, network):
-        """Update neuromodulator levels."""
-        for modulator, level in self.neuromodulators.items():
-            # Natural decay
-            decay = NEUROMODULATORS[modulator]['decay_rate']
-            self.neuromodulators[modulator] *= (1 - decay)
-            # Receive modulator signals from neighbors
-            nearby = network._get_nodes_in_radius(self, NEUROMODULATORS[modulator]['spread_radius'])
-            for neighbor in nearby:
-                self.neuromodulators[modulator] += neighbor.neuromodulators[modulator] * 0.1
-
 class NeuralNetwork:
     def __init__(self, max_nodes=200):
         self.nodes = []
@@ -939,73 +770,106 @@ class NeuralNetwork:
                                      for strength in node.connections.values())
                 node.backpropagate(upstream_gradient=upstream_gradient)
 
-class PatternDetector:
-    """Enhanced pattern recognition system.""" 
-    def __init__(self):
-        self.patterns = {}
-        self.sequence_memory = deque(maxlen=1000)
-        self.min_pattern_length = 3
-        self.max_pattern_length = 20
-        
-    def analyze_sequence(self, state):
-        """Analyze network state for patterns.""" 
-        self.sequence_memory.append(state)
-        # Use GPU for pattern matching if available
-        if cp is not None:
-            return self._gpu_pattern_search()
-        return self._cpu_pattern_search()
-        
-    def _gpu_pattern_search(self):
-        """GPU-accelerated pattern search""" 
-        if not cp:
-            return self._cpu_pattern_search()
-        try:
-            # Convert sequence to GPU array
-            seq_array = cp.array(list(self.sequence_memory))
-            patterns = {}
-            # Search for patterns of different lengths
-            for length in range(self.min_pattern_length, self.max_pattern_length):
-                # Create sliding windows
-                windows = cp.lib.stride_tricks.sliding_window_view(seq_array, length)
-                # Compute similarity matrix
-                sim_matrix = cp.matmul(windows, windows.T)
-                # Find matching patterns
-                matches = cp.where(sim_matrix > 0.9)
-                # Process matches
-                for i, j in zip(*matches):
-                    if i < j:  # Avoid duplicates
-                        pattern = tuple(seq_array[i:i+length].get())
-                        if pattern not in patterns:
-                            patterns[pattern] = {
-                                'count': 1,
-                                'positions': [i]
-                            }
-                        else:
-                            patterns[pattern]['count'] += 1
-                            patterns[pattern]['positions'].append(i)
-            return patterns
-        except Exception as e:
-            print(f"GPU pattern search failed: {e}")
-            return self._cpu_pattern_search()
+class BackgroundRenderer:
+    def __init__(self, simulator):
+        self.simulator = simulator
+        self.visualization_queue = queue.Queue()
+        self.ready_figures = {}
+        self.running = False
+        self.thread = None
+        self.last_render_time = time.time()
+        self.lock = threading.Lock()
+        self.rendering_in_progress = False
+        self.tendril_visibility = True
+        self.tendril_duration = 30
+        self.last_error = None
+        self.error_count = 0
+        self._init_thread_safe_attrs()
     
-    def _cpu_pattern_search(self):
-        """CPU-based pattern search implementation.""" 
-        patterns = {}
-        history = list(self.sequence_memory)
+    def start(self):
+        """Start the background rendering thread.""" 
+        if self.running:
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._render_loop)
+        self.thread.daemon = True
+        self.thread.start()
+    
+    def stop(self):
+        """Stop the background rendering thread.""" 
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1.0)
+            self.thread = None
+    
+    def request_render(self, render_type='all', mode='3d', force=False):
+        """Request a specific visualization to be rendered.""" 
+        if self.rendering_in_progress and not force:
+            return False
         
-        for length in range(self.min_pattern_length, self.max_pattern_length):
-            for i in range(len(history) - length):
-                pattern = tuple(history[i:i+length])
-                if pattern not in patterns:
-                    patterns[pattern] = {
-                        'count': 1,
-                        'positions': [i]
-                    }
-                else:
-                    patterns[pattern]['count'] += 1
-                    patterns[pattern]['positions'].append(i)
-        
-        return {k: v for k, v in patterns.items() if v['count'] >= 2}
+        self.visualization_queue.put({
+            'type': render_type,
+            'mode': mode,
+            'force': force,
+            'timestamp': time.time()
+        })
+        return True
+    
+    def get_figure(self, figure_type):
+        """Get a rendered figure if available.""" 
+        with self.lock:
+            return self.ready_figures.get(figure_type)
+    
+    def _render_loop(self):
+        """Main rendering loop that runs in background.""" 
+        while self.running:
+            try:
+                # Check if there's a rendering request
+                try:
+                    request = self.visualization_queue.get(block=True, timeout=0.5)
+                except queue.Empty:
+                    continue
+                
+                # Set flag to indicate rendering is in progress
+                self.rendering_in_progress = True
+                
+                # Apply template based on dark mode
+                template = "plotly_dark" if st.session_state.get('use_dark_mode', False) else "plotly_white"
+                
+                # Get figures based on request type
+                if request['type'] == 'all' or request['type'] == 'network':
+                    try:
+                        # Create a complete copy of data to prevent conflicts
+                        with self.simulator.lock:
+                            mode = request['mode']
+                            if mode == '3d':
+                                network_fig = self.simulator.network._visualize_3d()
+                            else:
+                                network_fig = self.simulator.network._visualize_2d()
+                        
+                        network_fig.update_layout(template=template)
+                        with self.lock:
+                            self.ready_figures['network'] = network_fig
+                        self.error_count = 0  # Reset error count on success
+                    except Exception as e:
+                        self.error_count += 1
+                        self.last_error = f"Network render error: {str(e)}"
+                        print(self.last_error)
+                
+                # Similar pattern for other visualization types
+                # ...existing code for other figure types...
+                
+                # Record the last successful render time
+                self.last_render_time = time.time()
+                
+                # Clear rendering in progress flag
+                self.rendering_in_progress = False
+                
+            except Exception as e:
+                self.last_error = f"Rendering thread error: {str(e)}"
+                print(self.last_error)
+                self.rendering_in_progress = False
+                time.sleep(0.5)  # Delay to prevent high CPU on errors
 
 class NetworkSimulator:
     def __init__(self, network=None, max_nodes=200):
@@ -1193,106 +1057,190 @@ def parse_contents(contents, filename):
         st.error(f"Error loading file: {str(e)}")
     return None
 
-class BackgroundRenderer:
-    def __init__(self, simulator):
-        self.simulator = simulator
-        self.visualization_queue = queue.Queue()
-        self.ready_figures = {}
-        self.running = False
-        self.thread = None
-        self.last_render_time = time.time()
-        self.lock = threading.Lock()
-        self.rendering_in_progress = False
-        self.tendril_visibility = True
-        self.tendril_duration = 30
-        self.last_error = None
-        self.error_count = 0
-        self._init_thread_safe_attrs()
-    
-    def start(self):
-        """Start the background rendering thread.""" 
-        if self.running:
-            return
-        self.running = True
-        self.thread = threading.Thread(target=self._render_loop)
-        self.thread.daemon = True
-        self.thread.start()
-    
-    def stop(self):
-        """Stop the background rendering thread.""" 
-        self.running = False
-        if self.thread:
-            self.thread.join(timeout=1.0)
-            self.thread = None
-    
-    def request_render(self, render_type='all', mode='3d', force=False):
-        """Request a specific visualization to be rendered.""" 
-        if self.rendering_in_progress and not force:
-            return False
+class Node:
+    def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
+        """Initialize a node with given properties."""
+        if not node_type:
+            # Fix: Make sure weights match NODE_TYPES length
+            node_types = list(NODE_TYPES.keys())
+            weights = [1.0] * len(node_types)  # Equal weights for all types
+            node_type = random.choices(node_types, weights=weights)[0]
         
-        self.visualization_queue.put({
-            'type': render_type,
-            'mode': mode,
-            'force': force,
-            'timestamp': time.time()
-        })
-        return True
+        self.id = node_id
+        self.type = node_type
+        self.properties = NODE_TYPES[node_type]
+        self.connections = {}
+        
+        # Initialize properties based on node type
+        min_size, max_size = self.properties['size_range']
+        self.size = random.uniform(min_size, max_size)
+        
+        min_rate, max_rate = self.properties['firing_rate']
+        self.firing_rate = random.uniform(min_rate, max_rate)
+        
+        # ...rest of initialization code...
+
+    def connect(self, other_node):
+        strength = self.properties['connection_strength']
+        if len(self.connections) < self.max_connections:
+            if other_node.id not in self.connections:
+                self.connections[other_node.id] = strength
+
+    def weaken_connections(self):
+        pass
+
+    def attempt_resurrection(self):
+        """Try to resurrect a dead node."""
+        if not self.visible and random.random() < self.properties['resurrection_chance']:
+            self.visible = True
+            self.energy = 50.0
+            self.size *= 0.8
+            self.connections.clear()
+            return True
+        return False
+
+    def update_position(self, network):
+        """Update node's 3D position based on forces."""
+        if not self.visible:
+            return
+        # Add slight random movement
+        for i in range(3):
+            self.velocity[i] += random.uniform(-0.01, 0.01)
+            self.velocity[i] = max(-0.1, min(0.1, self.velocity[i]))
+            self.position[i] += self.velocity[i]
+        # Keep within bounds
+        for i in range(3):
+            if abs(self.position[i]) > 10:
+                self.position[i] = 10 * (1 if self.position[i] > 0 else -1)
+                self.velocity[i] *= -0.5
+
+    def process_signals(self, network):
+        """Process and update node signals and tendrils."""
+        # Update activation level decay
+        if self.activated:
+            self.activation_level *= 0.95
+            if self.activation_level < 0.05:
+                self.activated = False
+                self.activation_level = 0.0
+                
+        # Update signal progress and handle completions
+        for signal in list(self.signals):
+            signal['progress'] = min(1.0, signal['progress'] + 0.05)
+            signal['duration'] -= 1
+            if signal['progress'] >= 1.0 or signal['duration'] <= 0:
+                self.signals.remove(signal)
+                continue
+            # Handle special signal types based on node type
+            if self.type == 'memory' and random.random() < 0.3:
+                signal['duration'] += 1
+            elif self.type == 'catalyst':
+                signal['strength'] *= 1.05
+                
+        # Update tendril progress
+        for tendril in list(self.signal_tendrils):
+            tendril['progress'] = min(1.0, tendril['progress'] + 0.03)
+            tendril['duration'] -= 1
+            if tendril['progress'] >= 1.0 or tendril['duration'] <= 0:
+                self.signal_tendrils.remove(tendril)
+
+    def backpropagate(self, target_value=None, upstream_gradient=None):
+        """Implement backpropagation for learning."""
+        if self.layer_type == 'output' and target_value is not None:
+            # For output nodes, compute initial gradient
+            error = self.activation_level - target_value
+            self.gradient = error * self._activation_derivative()
+        elif upstream_gradient is not None:
+            # For hidden nodes, use upstream gradient
+            self.gradient = upstream_gradient * self._activation_derivative()
+        # Update weights using gradient
+        learning_rate = self.genes['learning_rate'] * (1 + self.neuromodulators['dopamine'])
+        for conn_id, strength in self.connections.items():
+            weight_update = -learning_rate * self.gradient * strength
+            self.weights_gradient[conn_id] = weight_update
+
+    def _activation_derivative(self):
+        """Compute derivative of activation function."""
+        x = self.activation_level
+        return x * (1 - x)  # Derivative of sigmoid
+
+    def update_neuromodulators(self, network):
+        """Update neuromodulator levels."""
+        for modulator, level in self.neuromodulators.items():
+            # Natural decay
+            decay = NEUROMODULATORS[modulator]['decay_rate']
+            self.neuromodulators[modulator] *= (1 - decay)
+            # Receive modulator signals from neighbors
+            nearby = network._get_nodes_in_radius(self, NEUROMODULATORS[modulator]['spread_radius'])
+            for neighbor in nearby:
+                self.neuromodulators[modulator] += neighbor.neuromodulators[modulator] * 0.1
+
+class PatternDetector:
+    """Enhanced pattern recognition system.""" 
+    def __init__(self):
+        self.patterns = {}
+        self.sequence_memory = deque(maxlen=1000)
+        self.min_pattern_length = 3
+        self.max_pattern_length = 20
+        
+    def analyze_sequence(self, state):
+        """Analyze network state for patterns.""" 
+        self.sequence_memory.append(state)
+        # Use GPU for pattern matching if available
+        if cp is not None:
+            return self._gpu_pattern_search()
+        return self._cpu_pattern_search()
+        
+    def _gpu_pattern_search(self):
+        """GPU-accelerated pattern search""" 
+        if not cp:
+            return self._cpu_pattern_search()
+        try:
+            # Convert sequence to GPU array
+            seq_array = cp.array(list(self.sequence_memory))
+            patterns = {}
+            # Search for patterns of different lengths
+            for length in range(self.min_pattern_length, self.max_pattern_length):
+                # Create sliding windows
+                windows = cp.lib.stride_tricks.sliding_window_view(seq_array, length)
+                # Compute similarity matrix
+                sim_matrix = cp.matmul(windows, windows.T)
+                # Find matching patterns
+                matches = cp.where(sim_matrix > 0.9)
+                # Process matches
+                for i, j in zip(*matches):
+                    if i < j:  # Avoid duplicates
+                        pattern = tuple(seq_array[i:i+length].get())
+                        if pattern not in patterns:
+                            patterns[pattern] = {
+                                'count': 1,
+                                'positions': [i]
+                            }
+                        else:
+                            patterns[pattern]['count'] += 1
+                            patterns[pattern]['positions'].append(i)
+            return patterns
+        except Exception as e:
+            print(f"GPU pattern search failed: {e}")
+            return self._cpu_pattern_search()
     
-    def get_figure(self, figure_type):
-        """Get a rendered figure if available.""" 
-        with self.lock:
-            return self.ready_figures.get(figure_type)
-    
-    def _render_loop(self):
-        """Main rendering loop that runs in background.""" 
-        while self.running:
-            try:
-                # Check if there's a rendering request
-                try:
-                    request = self.visualization_queue.get(block=True, timeout=0.5)
-                except queue.Empty:
-                    continue
-                
-                # Set flag to indicate rendering is in progress
-                self.rendering_in_progress = True
-                
-                # Apply template based on dark mode
-                template = "plotly_dark" if st.session_state.get('use_dark_mode', False) else "plotly_white"
-                
-                # Get figures based on request type
-                if request['type'] == 'all' or request['type'] == 'network':
-                    try:
-                        # Create a complete copy of data to prevent conflicts
-                        with self.simulator.lock:
-                            mode = request['mode']
-                            if mode == '3d':
-                                network_fig = self.simulator.network._visualize_3d()
-                            else:
-                                network_fig = self.simulator.network._visualize_2d()
-                        
-                        network_fig.update_layout(template=template)
-                        with self.lock:
-                            self.ready_figures['network'] = network_fig
-                        self.error_count = 0  # Reset error count on success
-                    except Exception as e:
-                        self.error_count += 1
-                        self.last_error = f"Network render error: {str(e)}"
-                        print(self.last_error)
-                
-                # Similar pattern for other visualization types
-                # ...existing code for other figure types...
-                
-                # Record the last successful render time
-                self.last_render_time = time.time()
-                
-                # Clear rendering in progress flag
-                self.rendering_in_progress = False
-                
-            except Exception as e:
-                self.last_error = f"Rendering thread error: {str(e)}"
-                print(self.last_error)
-                self.rendering_in_progress = False
-                time.sleep(0.5)  # Delay to prevent high CPU on errors
+    def _cpu_pattern_search(self):
+        """CPU-based pattern search implementation.""" 
+        patterns = {}
+        history = list(self.sequence_memory)
+        
+        for length in range(self.min_pattern_length, self.max_pattern_length):
+            for i in range(len(history) - length):
+                pattern = tuple(history[i:i+length])
+                if pattern not in patterns:
+                    patterns[pattern] = {
+                        'count': 1,
+                        'positions': [i]
+                    }
+                else:
+                    patterns[pattern]['count'] += 1
+                    patterns[pattern]['positions'].append(i)
+        
+        return {k: v for k, v in patterns.items() if v['count'] >= 2}
 
 # Update the Node class fire method to better handle tendrils
 class Node:
