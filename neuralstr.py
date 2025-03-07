@@ -728,45 +728,218 @@ class NeuralNetwork:
         return pos
 
     def visualize(self, mode='3d'):
-        """Visualize the network using Three.js"""
+        """Visualize the network with enhanced visuals."""
         if not self.nodes:
-            return None
-            
-        # Convert network data to Three.js format
-        data = {
-            'nodes': [
-                {
-                    'id': node.id,
-                    'position': node.position,
-                    'size': node.size,
-                    'color': NODE_TYPES[node.type]['color'],
-                    'type': node.type,
-                    'energy': node.energy,
-                    'connections': len(node.connections)
-                }
-                for node in self.nodes if node.visible
-            ],
-            'edges': [
-                {
-                    'source': edge[0],
-                    'target': edge[1],
-                    'strength': self.nodes[edge[0]].connections.get(edge[1], 0)
-                }
-                for edge in self.graph.edges()
-            ],
-            'signals': [
-                {
-                    'source': node.id,
-                    'target': signal['target_id'],
-                    'progress': signal['progress']
-                }
-                for node in self.nodes
-                if node.visible and node.signals
-                for signal in node.signals
-            ]
-        }
-        
-        return data
+            fig = go.Figure()
+            fig.add_annotation(text="No nodes yet", showarrow=False)
+            return fig
+        if mode == '3d':
+            return self._visualize_3d()
+        else:
+            return self._visualize_2d()
+
+    def _visualize_3d(self):
+        """Create 3D visualization of the network with enhanced aesthetics."""
+        fig = go.Figure()
+        pos = self.calculate_3d_layout()
+        # Draw edges with signal animations
+        edge_traces = []
+        signal_traces = []
+        # Add basic connections
+        for edge in self.graph.edges(data=True):
+            u, v, data = edge
+            if u in pos and v in pos:
+                x0, y0, z0 = pos[u]
+                x1, y1, z1 = pos[v]
+                # Get connection strength
+                strength = 0
+                if v in self.nodes[u].connections:
+                    strength = self.nodes[u].connections[v]
+                elif u in self.nodes[v].connections:
+                    strength = self.nodes[v].connections[u]
+                # Create color gradient based on strength
+                color = f'rgba({min(255, int(strength * 50))}, {100 + min(155, int(strength * 20))}, {255 - min(255, int(strength * 30))}, {min(0.9, 0.2 + strength/5)})'
+                # Add edge trace
+                edge_traces.append(go.Scatter3d(
+                    x=[x0, x1, None],
+                    y=[y0, y1, None],
+                    z=[z0, z1, None],
+                    mode='lines',
+                    line=dict(color=color, width=2),
+                    hoverinfo='text',
+                    hovertext=f'Strength: {strength:.2f}',
+                    showlegend=False
+                ))
+        # Add signal animations
+        for node in self.nodes:
+            if node.visible and hasattr(node, 'signals') and node.signals:
+                for signal in node.signals:
+                    if 'target_id' in signal:
+                        target_id = signal['target_id']
+                        if target_id < len(self.nodes) and self.nodes[target_id].visible:
+                            if node.id in pos and target_id in pos:
+                                x0, y0, z0 = pos[node.id]
+                                x1, y1, z1 = pos[target_id]
+                                progress = signal.get('progress', 0)
+                                # Interpolate signal position
+                                xp = x0 + (x1 - x0) * progress
+                                yp = y0 + (y1 - y0) * progress
+                                zp = z0 + (z1 - z0) * progress
+                                signal_traces.append(go.Scatter3d(
+                                    x=[xp],
+                                    y=[yp],
+                                    z=[zp],
+                                    mode='markers',
+                                    marker=dict(
+                                        size=8,
+                                        color='red',
+                                        symbol='diamond',
+                                        opacity=0.7
+                                    ),
+                                    showlegend=False
+                                ))
+        # Add all edge traces
+        for trace in edge_traces:
+            fig.add_trace(trace)
+        # Add all signal traces
+        for trace in signal_traces:
+            fig.add_trace(trace)
+        # Add nodes grouped by type
+        nodes_by_type = {}
+        for node in self.nodes:
+            if node.visible and node.id in pos:
+                if node.type not in nodes_by_type:
+                    nodes_by_type[node.type] = {
+                        'x': [], 'y': [], 'z': [],
+                        'sizes': [], 'text': [], 'colors': []
+                    }
+                x, y, z = pos[node.id]
+                nodes_by_type[node.type]['x'].append(x)
+                nodes_by_type[node.type]['y'].append(y)
+                nodes_by_type[node.type]['z'].append(z)
+                nodes_by_type[node.type]['sizes'].append(node.size/3)
+                nodes_by_type[node.type]['colors'].append(NODE_TYPES[node.type]['color'])
+                nodes_by_type[node.type]['text'].append(
+                    f"Node {node.id} ({node.type})<br>"
+                    f"Size: {node.size:.1f}<br>"
+                    f"Energy: {node.energy:.1f}<br>"
+                    f"Connections: {len(node.connections)}"
+                )
+        # Add node traces
+        for node_type, data in nodes_by_type.items():
+            fig.add_trace(go.Scatter3d(
+                x=data['x'],
+                y=data['y'],
+                z=data['z'],
+                mode='markers',
+                marker=dict(
+                    size=data['sizes'],
+                    color=NODE_TYPES[node_type]['color'],
+                    opacity=0.9,
+                    line=dict(width=1, color='rgb(40,40,40)'),
+                ),
+                text=data['text'],
+                hoverinfo='text',
+                name=node_type
+            ))
+        # Update layout
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
+                yaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
+                zaxis=dict(showticklabels=False, title='', showgrid=False, zeroline=False),
+                bgcolor='rgba(240,248,255,0.8)',
+                aspectmode='cube',
+            ),
+            margin=dict(l=0, r=0, b=0, t=30),
+            scene_camera=dict(
+                eye=dict(x=1.5, y=1.5, z=1.2),
+                up=dict(x=0, y=0, z=1)
+            ),
+            title="Neural Network Visualization - 3D View",
+            showlegend=True,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=0.01,
+                bgcolor="rgba(255,255,255,0.8)"
+            ),
+            template="plotly_white"
+        )
+        return fig
+
+    def _visualize_2d(self):
+        """Create 2D visualization of the network."""
+        fig = go.Figure()
+        pos = {n.id: (n.position[0], n.position[1]) for n in self.nodes if n.visible}
+        # Draw edges
+        for edge in self.graph.edges(data=True):
+            u, v, data = edge
+            if u in pos and v in pos:
+                x0, y0 = pos[u]
+                x1, y1 = pos[v]
+                # Get connection strength
+                strength = 0
+                if v in self.nodes[u].connections:
+                    strength = self.nodes[u].connections[v]
+                elif u in self.nodes[v].connections:
+                    strength = self.nodes[v].connections[u]
+                # Create edge color based on strength
+                color = f'rgba({min(255, int(strength * 50))}, {100 + min(155, int(strength * 20))}, {255 - min(255, int(strength * 30))}, {min(0.9, 0.2 + strength/5)})'
+                fig.add_trace(go.Scatter(
+                    x=[x0, x1, None],
+                    y=[y0, y1, None],
+                    mode='lines',
+                    line=dict(color=color, width=2),
+                    hoverinfo='text',
+                    hovertext=f'Strength: {strength:.2f}',
+                    showlegend=False
+                ))
+        # Draw nodes grouped by type
+        nodes_by_type = {}
+        for node in self.nodes:
+            if node.visible and node.id in pos:
+                if node.type not in nodes_by_type:
+                    nodes_by_type[node.type] = {
+                        'x': [], 'y': [],
+                        'sizes': [], 'text': []
+                    }
+                x, y = pos[node.id]
+                nodes_by_type[node.type]['x'].append(x)
+                nodes_by_type[node.type]['y'].append(y)
+                nodes_by_type[node.type]['sizes'].append(node.size/2)
+                nodes_by_type[node.type]['text'].append(
+                    f"Node {node.id} ({node.type})<br>"
+                    f"Size: {node.size:.1f}<br>"
+                    f"Energy: {node.energy:.1f}<br>"
+                    f"Connections: {len(node.connections)}"
+                )
+        for node_type, data in nodes_by_type.items():
+            fig.add_trace(go.Scatter(
+                x=data['x'],
+                y=data['y'],
+                mode='markers',
+                marker=dict(
+                    size=data['sizes'],
+                    color=NODE_TYPES[node_type]['color'],
+                    line=dict(width=1, color='rgb(40,40,40)'),
+                ),
+                text=data['text'],
+                hoverinfo='text',
+                name=node_type
+            ))
+        fig.update_layout(
+            title="Neural Network - 2D View",
+            xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+            yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
+            plot_bgcolor='rgba(240,240,240,0.8)',
+            showlegend=True,
+            width=800,
+            height=600,
+            template="plotly_white"
+        )
+        return fig
 
     def get_stats_figure(self):
         """Generate network statistics visualization."""
@@ -1137,27 +1310,12 @@ def parse_contents(contents, filename):
         st.error(f"Error loading file: {str(e)}")
     return None
 
-# ...existing code...
-
+# Streamlit UI code
 def create_ui():
     """Create the main Streamlit UI."""
-    # Create custom component for Three.js visualization
-    if 'threejs_component' not in st.session_state:
-        st.session_state.threejs_component = components.declare_component(
-            "neural_network_3d",
-            path="frontend/build"
-        )
-    
     # Create display containers
     viz_container = st.empty()
     stats_container = st.empty()
-    
-    with viz_container:
-        # Use Three.js component for visualization
-        network_data = st.session_state.simulator.network.visualize()
-        if network_data:
-            st.session_state.threejs_component(network_data=network_data, key="network_viz")
-    
     # Sidebar controls
     with st.sidebar:
         st.header("Simulation Controls")
@@ -1237,7 +1395,7 @@ def _initialize_network():
     if 'viz_mode' not in st.session_state:
         st.session_state.viz_mode = '3d'  # Set default visualization mode
     if 'update_interval' not in st.session_state:
-        st.session_state.update_interval = 0.05  # Faster updates
+        st.session_state.update_interval = 0.1  # Faster updates
     if 'last_update' not in st.session_state:
         st.session_state.last_update = time.time()
     if 'frame_count' not in st.session_state:
@@ -1249,59 +1407,67 @@ def update_display():
     """Update the visualization with unique keys for each Plotly chart."""
     _ensure_node_signals()
     
-    # Create main tabs with consistent containers
-    if 'main_tabs' not in st.session_state:
-        st.session_state.main_tabs = st.tabs(["Network View", "Analysis"])
+    # Create main tabs
+    main_tabs = st.tabs(["Network View", "Analysis"])
     
-    with st.session_state.main_tabs[0]:
+    with main_tabs[0]:
         # Network visualization
         col1, col2 = st.columns([2, 1])
         with col1:
             st.header("Neural Network")
             network_fig = st.session_state.simulator.network.visualize(mode=st.session_state.viz_mode)
-            st.plotly_chart(network_fig, use_container_width=True, key=f"network_viz_{st.session_state.frame_count}")
+            st.plotly_chart(network_fig, use_container_width=True, key="network_viz")
         
         with col2:
             st.header("Activity Heatmap")
             activity_fig = st.session_state.simulator.network.get_activity_heatmap()
-            st.plotly_chart(activity_fig, use_container_width=True, key=f"activity_viz_{st.session_state.frame_count}")
-
-    with st.session_state.main_tabs[1]:
+            st.plotly_chart(activity_fig, use_container_width=True, key="activity_viz")
+    
+    with main_tabs[1]:
+        # Analysis section
         col1, col2 = st.columns(2)
         with col1:
             st.header("Network Statistics")
             stats_fig = st.session_state.simulator.network.get_stats_figure()
             if stats_fig:
-                st.plotly_chart(stats_fig, use_container_width=True, key=f"stats_viz_{st.session_state.frame_count}")
+                st.plotly_chart(stats_fig, use_container_width=True, key="stats_viz")
         
         with col2:
-            if st.session_state.frame_count % 5 == 0:  # Update less frequently
-                st.header("Firing Patterns")
-                pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
-                st.plotly_chart(pattern_fig, use_container_width=True, key=f"pattern_viz_{st.session_state.frame_count}")
-                
-                st.header("Connection Strength")
-                strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
-                st.plotly_chart(strength_fig, use_container_width=True, key=f"strength_viz_{st.session_state.frame_count}")
+            st.header("Firing Patterns")
+            pattern_fig = st.session_state.simulator.network.visualize_firing_patterns()
+            st.plotly_chart(pattern_fig, use_container_width=True, key="pattern_viz")
+            
+            st.header("Connection Strength")
+            strength_fig = st.session_state.simulator.network.get_connection_strength_visualization()
+            st.plotly_chart(strength_fig, use_container_width=True, key="strength_viz")
 
-# Replace the main simulation loop with this optimized version
-def run_simulation():
-    while st.session_state.simulation_running:
-        current_time = time.time()
-        elapsed = current_time - st.session_state.last_update
+# Update simulation loop timing
+def _initialize_network():
+    """Initialize network with basic configuration."""
+    # ...existing code...
+    if 'update_interval' not in st.session_state:
+        st.session_state.update_interval = 0.1  # Faster updates
+    if 'simulation_speed' not in st.session_state:
+        st.session_state.simulation_speed = 1.0
+
+# Adjust main simulation loop
+if st.session_state.animation_enabled and st.session_state.simulation_running:
+    current_time = time.time()
+    elapsed = current_time - st.session_state.last_update
+    
+    # Run multiple simulation steps per visual update
+    if elapsed > st.session_state.update_interval:
+        steps = int(st.session_state.simulation_speed * 5)  # Run multiple steps
+        with st.session_state.simulator.lock:
+            for _ in range(steps):
+                st.session_state.simulator.network.step()
         
-        if elapsed > st.session_state.update_interval:
-            # Run multiple simulation steps per visual update
-            steps = max(1, int(st.session_state.simulation_speed * 3))
-            with st.session_state.simulator.lock:
-                for _ in range(steps):
-                    st.session_state.simulator.network.step()
-            
-            st.session_state.last_update = current_time
-            st.session_state.frame_count += 1
-            
-            # Force rerun without sleep to maintain responsiveness
-            st.rerun()
+        update_display()
+        st.session_state.last_update = current_time
+        st.session_state.frame_count += 1
+    
+    time.sleep(0.01)  # Reduced sleep time
+    st.rerun()
 
 # Create requirements file if needed
 if not os.path.exists("requirements.txt"):
@@ -1346,11 +1512,22 @@ _initialize_network()
 # Create display containers
 viz_container, stats_container = create_ui()
 
-# Run simulation loop
-if st.session_state.simulation_running:
-    run_simulation()
+# Main simulation and visualization loop
+if st.session_state.animation_enabled and st.session_state.simulation_running:
+    current_time = time.time()
+    elapsed = current_time - st.session_state.last_update
+    
+    if elapsed > st.session_state.update_interval:
+        update_display()  # Use the main update_display function
+        st.session_state.last_update = current_time
+        st.session_state.frame_count += 1
+    
+    time.sleep(0.05)
+    st.rerun()
 else:
-    update_display()  # Show current state when paused
+    with st.empty():
+        if st.button("🔄 Refresh View"):
+            update_display()
 
 # Create requirements file if needed
 if not os.path.exists("requirements.txt"):
