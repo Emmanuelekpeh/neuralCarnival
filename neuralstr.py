@@ -1453,6 +1453,18 @@ def _initialize_session_state():
 
 # ...existing code...
 
+def _ensure_node_signals():
+    """Ensure all nodes have required signal attributes."""
+    for node in st.session_state.simulator.network.nodes:
+        if not hasattr(node, 'signals'):
+            node.signals = []
+        if not hasattr(node, 'signal_tendrils'):
+            node.signal_tendrils = []
+        if not hasattr(node, 'activation_level'):
+            node.activation_level = 0.0
+        if not hasattr(node, 'activated'):
+            node.activated = False
+
 def update_display():
     """Update the visualization with unique keys for each Plotly chart."""
     _ensure_node_signals()
@@ -1596,15 +1608,4 @@ def create_requirements_file():
     ]
     with open("requirements.txt", "w") as f:
         f.write("\n".join(requirements))
-
-def _ensure_node_signals():
-    """Ensure all nodes have required signal attributes."""
-    for node in st.session_state.simulator.network.nodes:
-        if not hasattr(node, 'signals'):
-            node.signals = []
-        if not hasattr(node, 'signal_tendrils'):
-            node.signal_tendrils = []
-        if not hasattr(node, 'activation_level'):
-            node.activation_level = 0.0
-        if not hasattr(node, 'activated'):
-            node.activated = False
+```
