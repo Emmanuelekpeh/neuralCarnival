@@ -11,6 +11,7 @@ import streamlit as st
 import time
 import os
 import sys
+import traceback
 
 # Define fallback classes for when imports fail
 class FallbackSimulator:
@@ -33,19 +34,46 @@ class FallbackSimulator:
 NetworkSimulator = None
 auto_populate_nodes = None
 
-# Try to import modules - REMOVING CIRCULAR IMPORT
+# Try to import modules with multiple fallback approaches
 try:
-    # Import from neuneuraly directly, not from frontend.src
-    from neuneuraly import NetworkSimulator, auto_populate_nodes
-    from neural_utils import (get_connection_strength_visualization, 
-                             analyze_network_metrics,
-                             create_network_dashboard)
-    from animation_utils import create_network_evolution_video, get_download_link
-    from resilience import ResilienceManager, recover_from_error, setup_auto_checkpointing
-    
+    # Try different import approaches
+    try:
+        # Try direct import first
+        from neuneuraly import NetworkSimulator, auto_populate_nodes
+        print("Successfully imported from neuneuraly")
+    except ImportError:
+        try:
+            # Try relative import
+            from .neuneuraly import NetworkSimulator, auto_populate_nodes
+            print("Successfully imported from .neuneuraly")
+        except ImportError:
+            # Try with full path
+            print("Attempting import with full path...")
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "neuneuraly", 
+                os.path.join(os.path.dirname(__file__), "neuneuraly.py")
+            )
+            neuneuraly_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(neuneuraly_module)
+            NetworkSimulator = neuneuraly_module.NetworkSimulator
+            auto_populate_nodes = neuneuraly_module.auto_populate_nodes
+            print("Successfully imported using spec loader")
+            
+    # Now try to import other modules
+    try:
+        from neural_utils import (get_connection_strength_visualization, 
+                                analyze_network_metrics,
+                                create_network_dashboard)
+        from animation_utils import create_network_evolution_video, get_download_link
+        from resilience import ResilienceManager, recover_from_error, setup_auto_checkpointing
+    except ImportError as e:
+        print(f"Warning: Could not import utility modules: {e}")
+        
     FULL_INTEGRATION = True
-except ImportError as e:
-    st.warning(f"Some modules could not be imported: {str(e)}")
+except Exception as e:
+    st.warning(f"Core modules could not be imported: {str(e)}")
+    st.error(traceback.format_exc())
     # If NetworkSimulator couldn't be imported, use fallback
     if NetworkSimulator is None:
         NetworkSimulator = FallbackSimulator
