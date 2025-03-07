@@ -986,7 +986,7 @@ simulation_running = False
 # Sidebar controls
 st.sidebar.header("Simulation Controls")
 if st.sidebar.button("Start"):
-    if not simulation
+    if not simulation:
     
     def step(self):
         """Simulate one step of network activity."""
