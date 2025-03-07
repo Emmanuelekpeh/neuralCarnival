@@ -2027,5 +2027,31 @@ def run_simulation_loop():
         if RESILIENCE_AVAILABLE:
             recover_from_error(f"Simulation loop error: {str(e)}")
 
+def auto_populate_nodes(network, count=10):
+    """Add multiple nodes of different types to kickstart the network."""
+    # Make sure to add essential node types for a balanced network
+    essential_types = ['explorer', 'connector', 'memory']
+    
+    # Add one of each essential type first
+    for node_type in essential_types:
+        network.add_node(visible=True, node_type=node_type)
+    
+    # Add remaining random nodes to reach count
+    remaining = max(0, count - len(essential_types))
+    for _ in range(remaining):
+        node_type = random.choice(list(NODE_TYPES.keys()))
+        network.add_node(visible=True, node_type=node_type)
+    
+    # Create some initial connections between nodes
+    visible_nodes = [n for n in network.nodes if n.visible]
+    if len(visible_nodes) >= 2:
+        for node in visible_nodes[:len(visible_nodes)//2]:
+            targets = random.sample(visible_nodes, min(3, len(visible_nodes)))
+            for target in targets:
+                if node.id != target.id:
+                    node.connect(target)
+    
+    return network
+
 if __name__ == "__main__":
     initialize_app()
