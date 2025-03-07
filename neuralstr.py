@@ -1337,6 +1337,18 @@ def create_ui():
         st.header("Parameters")
         speed = st.slider("Simulation Speed", 0.2, 10.0, 1.0, 0.2)
         learning_rate = st.slider("Learning Rate", 0.01, 0.5, 0.1, 0.01)
+        
+        # Visualization mode selector - moved from create_ui to main app code
+        st.header("Visualization")
+        viz_mode = st.radio(
+            "Display Mode", 
+            options=['3d', '2d'], 
+            index=0 if st.session_state.viz_mode == '3d' else 1,
+            key='viz_mode_selector'
+        )
+        # Update session state viz_mode based on radio selection
+        st.session_state.viz_mode = viz_mode
+
         if st.session_state.simulation_running:
             st.session_state.simulator.send_command({
                 "type": "set_speed",
@@ -1366,13 +1378,6 @@ def create_ui():
             if st.button("📂 Load Network"):
                 st.session_state.simulator = NetworkSimulator.load(selected_file)
                 st.success(f"Loaded network from {selected_file}")
-        # Add visualization mode selector
-        st.session_state.viz_mode = st.radio(
-            "Visualization Mode", 
-            options=['3d', '2d'], 
-            index=0,
-            key='viz_mode'
-        )
     return viz_container, stats_container
 
 def _initialize_network():
@@ -1387,6 +1392,8 @@ def _initialize_network():
             node_type='explorer'
         )
         initial_node.energy = 100.0
+    if 'viz_mode' not in st.session_state:
+        st.session_state.viz_mode = '3d'  # Set default visualization mode
     if 'update_interval' not in st.session_state:
         st.session_state.update_interval = 0.3
     if 'last_update' not in st.session_state:
@@ -1395,8 +1402,6 @@ def _initialize_network():
         st.session_state.frame_count = 0
     if 'animation_enabled' not in st.session_state:
         st.session_state.animation_enabled = True
-    if 'viz_mode' not in st.session_state:
-        st.session_state.viz_mode = '3d'
 
 def update_display():
     """Update the visualization with unique keys for each Plotly chart."""
