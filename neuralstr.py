@@ -152,6 +152,11 @@ class Node:
         self.position = [random.uniform(-10, 10) for _ in range(3)]
         self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
         
+        # Add signal tracking for visualization
+        self.signals = []  # Stores active signals
+        self.activation_level = 0.0  # Current activation level (0.0-1.0)
+        self.activated = False  # Whether node is currently activated
+        
     def fire(self, network):
         """Attempt to connect to other nodes with behavior based on node type."""
         if not hasattr(self, 'cycle_counter'):
@@ -279,9 +284,54 @@ class Node:
         else:
             target = random.choice(network.nodes)
         
+        # Set activation and create signals when firing
+        self.activated = True
+        self.activation_level = 1.0
+            
+        # When connecting, create a signal for visualization
         if target and target.id != self.id:
             self.connect(target)
             self.connection_attempts += 1
+            
+            # Create signal from this node to target
+            signal_strength = self.properties['connection_strength']
+            self.signals.append({
+                'target_id': target.id,
+                'strength': signal_strength,
+                'progress': 0.0,  # 0.0 to 1.0 progress along path
+                'duration': 20,   # How many steps signal lasts
+                'remaining': 20    # Counter for remaining steps
+            })
+
+    def process_signals(self, network):
+        """Process and update signals originating from this node."""
+        # Update activation level decay
+        if self.activated:
+            self.activation_level *= 0.9  # Decay activation
+            if self.activation_level < 0.1:
+                self.activated = False
+        
+        # Update existing signals
+        for signal in list(self.signals):
+            # Advance signal along path
+            signal['progress'] += 0.05
+            signal['remaining'] -= 1
+            
+            # If signal reaches target, activate target node
+            if signal['progress'] >= 1.0:
+                target_node = next((n for n in network.nodes if n.id == signal['target_id']), None)
+                if target_node:
+                    # Transfer activation to target
+                    target_boost = min(0.7, signal['strength'] * 0.2)
+                    target_node.activation_level = max(target_node.activation_level, target_boost)
+                    if target_boost > 0.3:
+                        target_node.activated = True
+                
+                # Remove completed signal
+                self.signals.remove(signal)
+            # Remove expired signals
+            elif signal['remaining'] <= 0:
+                self.signals.remove(signal)
 
     def connect(self, other_node):
         """Form or strengthen a connection to another node with specialized behaviors."""
@@ -485,6 +535,8 @@ class NeuralNetwork:
                 node.fire(self)
                 node.weaken_connections()
                 node.update_position(self)
+                # Process signals for visualization
+                node.process_signals(self)
             else:
                 node.attempt_resurrection()
 
@@ -583,9 +635,11 @@ class NeuralNetwork:
 
         pos = self.calculate_3d_layout()
 
-        # Draw edges with improved visual effects
+        # Draw edges with improved visual effects - including signal visualization
         edge_traces = []
+        signal_traces = []
         
+        # First add basic connections
         for edge in self.graph.edges(data=True):
             u, v, data = edge
             if u in pos and v in pos:
@@ -623,9 +677,74 @@ class NeuralNetwork:
                     hoverinfo='none',
                     showlegend=False
                 ))
+                
+                # Add small arrow to show direction (neuron connection direction)
+                arrow_pos = 0.7  # 70% along the path
+                arrow_idx = int(arrow_pos * (len(x_vals)-1))
+                if arrow_idx < len(x_vals)-1:
+                    edge_traces.append(go.Scatter3d(
+                        x=[x_vals[arrow_idx]],
+                        y=[y_vals[arrow_idx]],
+                        z=[z_vals[arrow_idx]],
+                        mode='markers',
+                        marker=dict(
+                            symbol='arrow',
+                            size=8,
+                            color=color,
+                            opacity=0.8,
+                            angle=(180/np.pi) * np.arctan2(y1-y0, x1-x0)
+                        ),
+                        hoverinfo='none',
+                        showlegend=False
+                    ))
 
-        # Add all edge traces
+        # Now add active signals
+        for node in self.nodes:
+            if node.visible and node.signals:
+                for signal in node.signals:
+                    target_id = signal['target_id']
+                    if target_id < len(self.nodes) and self.nodes[target_id].visible:
+                        target_node = self.nodes[target_id]
+                        
+                        # Get positions
+                        if node.id in pos and target_id in pos:
+                            x0, y0, z0 = pos[node.id]
+                            x1, y1, z1 = pos[target_id]
+                            
+                            # Calculate signal position along path
+                            p = signal['progress']
+                            arc_height = min(0.5, signal['strength'] * 0.1)
+                            z_arc = arc_height * np.sin(p * np.pi)
+                            
+                            x = x0 * (1-p) + x1 * p
+                            y = y0 * (1-p) + y1 * p
+                            z = z0 * (1-p) + z1 * p + z_arc
+                            
+                            # Create pulsing signal
+                            signal_color = f'rgba(255, 220, 0, {0.7 + 0.3*np.sin(signal["remaining"]/2)})'
+                            signal_size = 7 + 3 * signal['strength']
+                            
+                            signal_traces.append(go.Scatter3d(
+                                x=[x],
+                                y=[y],
+                                z=[z],
+                                mode='markers',
+                                marker=dict(
+                                    symbol='circle',
+                                    size=signal_size,
+                                    color=signal_color,
+                                    opacity=0.9,
+                                ),
+                                hoverinfo='text',
+                                hovertext=f"Signal: {node.type}->{target_node.type}<br>Strength: {signal['strength']:.2f}",
+                                showlegend=False
+                            ))
+        
+        # Add all traces
         for trace in edge_traces:
+            fig.add_trace(trace)
+            
+        for trace in signal_traces:
             fig.add_trace(trace)
 
         # Add nodes with improved styling
@@ -647,20 +766,33 @@ class NeuralNetwork:
                 node_size = node.size/2.5
                 nodes_by_type[node.type]['sizes'].append(node_size)
                 
-                # Customize node color based on connections and activity
+                # Customize node color based on activation level
                 base_color = NODE_TYPES[node.type]['color']
                 conn_count = len(node.connections)
-                activity = 1.0 - (node.last_fired / 20.0) if node.last_fired < 20 else 0
                 
-                if activity > 0.7:  # Recently active nodes glow
-                    nodes_by_type[node.type]['colors'].append(f"rgba({min(255, int(conn_count * 15))}, 200, 255, 0.95)")
+                # Color neurons based on activation
+                if node.activated:
+                    # Active neuron: bright glow based on activation
+                    glow = min(255, 100 + int(155 * node.activation_level))
+                    nodes_by_type[node.type]['colors'].append(
+                        f"rgba({glow}, {glow}, 255, 0.95)"
+                    )
+                elif node.last_fired < 5:
+                    # Recently fired: medium glow
+                    nodes_by_type[node.type]['colors'].append(
+                        f"rgba({min(255, int(conn_count * 15))}, 200, 255, 0.9)"
+                    )
                 else:
+                    # Inactive neuron: base color
                     nodes_by_type[node.type]['colors'].append(base_color)
 
+                # Enhanced tooltip with more information
                 hover_text = (f"Node {node.id} ({node.type})<br>"
                               f"Size: {node.size:.1f}<br>"
                               f"Connections: {len(node.connections)}<br>"
-                              f"Age: {node.age}")
+                              f"Age: {node.age}<br>"
+                              f"Firing Rate: {node.firing_rate:.2f}<br>"
+                              f"Active Signals: {len(node.signals)}")
                 nodes_by_type[node.type]['text'].append(hover_text)
 
         for node_type, data in nodes_by_type.items():
@@ -1225,14 +1357,37 @@ def update_display():
             summary = st.session_state.simulator.network.get_network_summary()
             st.json(summary, expanded=False)
         with col2:
-            st.header("Simulation Status")
-            active_nodes = len([n for n in st.session_state.simulator.network.nodes if n.visible])
-            st.metric("Active Nodes", active_nodes, delta=None, help="Number of currently visible nodes")
-            st.metric("Total Nodes", len(st.session_state.simulator.network.nodes))
-            st.metric("Simulation Steps", st.session_state.simulator.network.simulation_steps)
+            st.header("Information Transfer")
             
+            # Count active signals in the network
+            active_signals = sum(len(node.signals) for node in st.session_state.simulator.network.nodes if node.visible)
+            st.metric("Active Signals", active_signals, help="Number of information signals traveling between neurons")
+            
+            # Count active neurons
+            active_neurons = sum(1 for node in st.session_state.simulator.network.nodes if node.visible and node.activated)
+            st.metric("Active Neurons", active_neurons, help="Number of currently activated neurons")
+            
+            # Show simulation status
             status = "Running" if st.session_state.simulation_running else "Paused"
             st.info(f"Simulation Status: {status}")
+            
+            # Add a "neural pathway strength" meter
+            if active_neurons > 0:
+                # Calculate average connection strength among active neurons
+                active_node_ids = [node.id for node in st.session_state.simulator.network.nodes 
+                                  if node.visible and node.activated]
+                pathway_strengths = []
+                
+                for node in st.session_state.simulator.network.nodes:
+                    if node.visible and node.activated:
+                        for conn_id, strength in node.connections.items():
+                            if conn_id in active_node_ids:
+                                pathway_strengths.append(strength)
+                
+                if pathway_strengths:
+                    avg_pathway = sum(pathway_strengths) / len(pathway_strengths)
+                    st.progress(min(1.0, avg_pathway / 5.0), 
+                               text=f"Neural Pathway Strength: {avg_pathway:.2f}")
 
 # Initial display
 update_display()
@@ -1255,7 +1410,7 @@ if st.session_state.simulation_running:
     # Always rerun when simulation is active, but with a small delay
     # to prevent excessive CPU usage
     time.sleep(0.05)
-    st.experimental_rerun()
+    st.rerun()  # Changed from st.experimental_rerun() to st.rerun()
 else:
     # When paused, provide a manual refresh option
     with refresh_placeholder.container():
