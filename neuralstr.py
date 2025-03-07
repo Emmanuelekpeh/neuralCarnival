@@ -1274,18 +1274,16 @@ def _initialize_session_state():
         )
         initial_node.energy = 100.0
         
-    if 'main_tabs' not in st.session_state:
-        st.session_state.main_tabs = None
+    # Remove the main_tabs initialization as we'll create tabs fresh each time
 
 def update_display():
     """Update the visualization with unique keys for each Plotly chart."""
     _ensure_node_signals()
     
-    # Create main tabs with consistent containers
-    if 'main_tabs' not in st.session_state:
-        st.session_state.main_tabs = st.tabs(["Network View", "Analysis"])
+    # Create tabs directly without storing them in session state
+    tabs = st.tabs(["Network View", "Analysis"])
     
-    with st.session_state.main_tabs[0]:
+    with tabs[0]:
         # Network visualization
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -1298,7 +1296,7 @@ def update_display():
             activity_fig = st.session_state.simulator.network.get_activity_heatmap()
             st.plotly_chart(activity_fig, use_container_width=True, key=f"activity_viz_{st.session_state.frame_count}")
 
-    with st.session_state.main_tabs[1]:
+    with tabs[1]:
         col1, col2 = st.columns(2)
         with col1:
             st.header("Network Statistics")
