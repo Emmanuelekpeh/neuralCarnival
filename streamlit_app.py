@@ -10,13 +10,8 @@ import traceback
 import logging
 from datetime import datetime
 
-# Set page config FIRST before any other Streamlit commands
-st.set_page_config(
-    page_title="Neural Carnival",
-    page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Must be the first Streamlit command
+st.set_page_config(page_title="Neural Network Simulation", layout="wide")
 
 # Configure logging
 log_dir = "logs"

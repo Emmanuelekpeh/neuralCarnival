@@ -123,87 +123,49 @@ except Exception as e:
 
 # Initialize session state if not already done
 def _initialize_session_state():
-    """Initialize session state variables."""
-    # Initialize simulator if not already done
-    if 'initialized' not in st.session_state:
-        st.session_state.initialized = False
+    """Initialize all session state variables."""
+    initial_states = {
+        'viz_mode': '3d',  # Default visualization mode
+        'refresh_interval': 0.5,  # Default refresh interval as float
+        'simulation_speed': 1.0,
+        'auto_generate_nodes': True,
+        'node_generation_rate': 0.1,
+        'max_nodes': 200,
+        'animation_enabled': True,
+        'show_tendrils': True,
+        'tendril_persistence': 20,
+        'refresh_rate': 5,
+        'use_dark_mode': False,
+        'force_refresh': False,
+        'buffered_rendering': True,
+        'render_interval': 0.5,
+        'render_frequency': 5,
+        'simulation_running': False,
+        'frame_count': 0,
+        'display_update_interval': 0.5,
+        'last_render_time': time.time(),
+        'last_update': time.time(),
+        'last_display_update': time.time(),
+        'viz_error_count': 0,
+        'learning_rate': 0.1,
+        'energy_decay_rate': 0.05,
+        'connection_threshold': 1.0,
+        'auto_refresh': True
+    }
     
-    if not st.session_state.initialized:
-        # Core simulation variables
-        if 'simulator' not in st.session_state:
-            st.session_state.simulator = None
-        
-        # UI state
-        if 'active_tab' not in st.session_state:
-            st.session_state.active_tab = "Simulation"
-        
-        if 'show_advanced' not in st.session_state:
-            st.session_state.show_advanced = False
-        
-        # Visualization settings
-        if 'viz_mode' not in st.session_state:
-            st.session_state.viz_mode = "3d"
-        
-        if 'last_render_time' not in st.session_state:
-            st.session_state.last_render_time = time.time()
-        
-        # Simulation parameters
-        if 'simulation_speed' not in st.session_state:
-            st.session_state.simulation_speed = 1.0
-        
-        if 'learning_rate' not in st.session_state:
-            st.session_state.learning_rate = 0.1
-        
-        if 'energy_decay_rate' not in st.session_state:
-            st.session_state.energy_decay_rate = 0.05
-        
-        if 'connection_threshold' not in st.session_state:
-            st.session_state.connection_threshold = 0.5
-        
-        if 'simulator_running' not in st.session_state:
-            st.session_state.simulator_running = False
-        
-        # Node generation settings
-        if 'auto_generate_nodes' not in st.session_state:
-            st.session_state.auto_generate_nodes = True
-        
-        if 'node_generation_rate' not in st.session_state:
-            st.session_state.node_generation_rate = 0.1
-        
-        if 'max_nodes' not in st.session_state:
-            st.session_state.max_nodes = 200
-        
-        # Refresh settings
-        if 'auto_refresh' not in st.session_state:
-            st.session_state.auto_refresh = True
-        
-        if 'refresh_interval' not in st.session_state:
-            st.session_state.refresh_interval = 0.5
-        
-        # Video recording
-        if 'video_recorder' not in st.session_state:
-            st.session_state.video_recorder = None
-        
-        # Error tracking
-        if 'viz_error_count' not in st.session_state:
-            st.session_state.viz_error_count = 0
-        
-        # Cache for background thread
-        if 'cached_viz_mode' not in st.session_state:
-            st.session_state.cached_viz_mode = '3d'
-        
-        if 'cached_simulation_speed' not in st.session_state:
-            st.session_state.cached_simulation_speed = 1.0
-        
-        # Mark as initialized
-        st.session_state.initialized = True
+    # Initialize all state variables if not already present
+    for key, value in initial_states.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+    
+    # Initialize simulator if not present
+    if 'simulator' not in st.session_state:
+        st.session_state.simulator = NetworkSimulator()
+        st.session_state.simulator.network.add_node(visible=True)
 
 def display_app():
     """Display the main application interface."""
     try:
-        # Initialize session state
-        _initialize_session_state()
-        
         # Create tabs for different sections
         tabs = st.tabs(["Simulation", "Analysis", "Export", "Settings", "Help"])
         
@@ -976,12 +938,13 @@ def _display_settings_interface():
             st.subheader("Visualization Settings")
             
             # Visualization mode
-            viz_mode = st.radio("Default Visualization Mode", ['3d', '2d'], index=0 if st.session_state.viz_mode == '3d' else 1, key="settings_viz_mode")
+            viz_mode = st.radio("Default Visualization Mode", ['3d', '2d'], 
+                              index=0 if st.session_state.viz_mode == "3d" else 1)
             if viz_mode != st.session_state.viz_mode:
                 st.session_state.viz_mode = viz_mode
             
-            # Refresh settings
-            auto_refresh = st.checkbox("Auto-refresh", value=st.session_state.auto_refresh, key="settings_auto_refresh")
+            # Auto-refresh
+            auto_refresh = st.checkbox("Auto-refresh", value=st.session_state.auto_refresh)
             if auto_refresh != st.session_state.auto_refresh:
                 st.session_state.auto_refresh = auto_refresh
             
@@ -992,8 +955,7 @@ def _display_settings_interface():
                     min_value=0.1, 
                     max_value=5.0, 
                     value=float(st.session_state.refresh_interval),
-                    step=0.1,
-                    key="settings_refresh_interval"
+                    step=0.1
                 )
                 if refresh_interval != st.session_state.refresh_interval:
                     st.session_state.refresh_interval = float(refresh_interval)

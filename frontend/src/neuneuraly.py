@@ -56,10 +56,7 @@ NODE_TYPES = {
         'connection_strength': 2.0,
         'resurrection_chance': 0.2
     }
-    # ...add other node types as needed...
 }
-
-# Define all classes in the correct order: Node -> PatternDetector -> NeuralNetwork -> BackgroundRenderer -> NetworkSimulator
 
 class Node:
     """A node in the neural network."""
@@ -68,7 +65,7 @@ class Node:
         """Initialize a node with the given ID."""
         if not node_type:
             # Random node type with weighted probability
-            weights = [0.1] * 11  
+            weights = [0.1] * len(NODE_TYPES)  
             node_type = random.choices(list(NODE_TYPES.keys()), weights=weights)[0]
         
         self.id = node_id
@@ -98,10 +95,15 @@ class Node:
         self.firing_particles = []
         self.signal_tendrils = []
         self.firing_color = self.properties['color']
+        self.firing_history = []
         
-        # 3D position and movement variables
-        self.position = [random.uniform(-10, 10) for _ in range(3)]  # Ensure it's a list
-        self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
+        # 3D position and movement variables - ensure they're lists
+        self._position = [random.uniform(-10, 10) for _ in range(3)]
+        self._velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
+        
+        # Node state
+        self.last_activation_time = 0
+        self.activation = 0.0
         
         # Get type-specific properties
         type_props = NODE_TYPES.get(self.type, NODE_TYPES['explorer'])
@@ -134,36 +136,60 @@ class Node:
         # Spontaneous firing
         self.spontaneous_firing_chance = type_props.get('spontaneous_firing', 0.01)
         self.time_since_last_fire = 0
+
+    @property
+    def position(self):
+        """Get the position as a list."""
+        return self._position
     
+    @position.setter
+    def position(self, value):
+        """Set the position, ensuring it's stored as a list."""
+        if isinstance(value, tuple):
+            value = list(value)
+        self._position = value
+    
+    @property
+    def velocity(self):
+        """Get the velocity as a list."""
+        return self._velocity
+    
+    @velocity.setter
+    def velocity(self, value):
+        """Set the velocity, ensuring it's stored as a list."""
+        if isinstance(value, tuple):
+            value = list(value)
+        self._velocity = value
+
     def update(self, network):
         """Update the node's state."""
         if not self.visible:
             return
-        
+
         # Update position
         self.update_position(network)
-        
+
         # Update firing animation
         self.update_firing_animation()
-        
+
         # Increase time since last fire
         self.time_since_last_fire += 1
-        
+
         # Apply activation decay
         self.activation = max(0.0, self.activation - self.decay_rate)
-        
+
         # Check if activation exceeds threshold
         if self.activation >= self.firing_threshold:
             self.fire(network)
             self.time_since_last_fire = 0
-        
+
         # Spontaneous firing based on node type
         elif random.random() < self.spontaneous_firing_chance * (1 + self.time_since_last_fire / 100):
             # Increase chance of spontaneous firing the longer it's been since last fire
             self.activation = self.firing_threshold
             self.fire(network)
             self.time_since_last_fire = 0
-    
+
     def connect(self, target_node):
         """Connect this node to another node."""
         if target_node.id not in self.connections and len(self.connections) < self.max_connections:
@@ -172,54 +198,55 @@ class Node:
             self.connections[target_node.id] = strength
             return True
         return False
-    
+
     def update_position(self, network):
-        """Update the 3D position of the node based on connections and natural movement."""
-        # Ensure position is a list
-        if not isinstance(self.position, list):
-            self.position = list(self.position)
-        
+        """Update the node's position based on connections and natural movement."""
+        # Update velocity based on connections
         for conn_id, strength in self.connections.items():
             if conn_id < len(network.nodes):
                 target = network.nodes[conn_id]
+                target_pos = target.position  # Will use the property getter
                 for i in range(3):
-                    force = (target.position[i] - self.position[i]) * strength * 0.01
+                    force = (target_pos[i] - self.position[i]) * strength * 0.01
                     self.velocity[i] += force
         
+        # Add random movement and update position
         for i in range(3):
             self.velocity[i] += random.uniform(-0.01, 0.01)
             self.velocity[i] *= 0.95
             self.position[i] += self.velocity[i]
             self.position[i] = max(-15, min(15, self.position[i]))
-    
+
     def get_position(self):
         """Get the current position as a list."""
         if isinstance(self.position, tuple):
-            return list(self.position)
+            self.position = list(self.position)
         return self.position
-    
+
     def set_position(self, pos):
-        """Set position, ensuring it's a list."""
-        self.position = list(pos)  # Convert to list if it's a tuple
-    
+        """Set the position, ensuring it's stored as a list."""
+        if isinstance(pos, tuple):
+            pos = list(pos)
+        self.position = pos
+
     def fire(self, network):
         """Fire the node, sending signals to connected nodes."""
         if not self.visible:
             return
-        
+
         # Record firing
         self.firing_history.append(time.time())
-        
+
         # Set firing animation state
         self.is_firing = True
         self.firing_animation_step = 0
-        
+
         # Create firing particles
         self._create_firing_particles()
-        
+
         # Calculate signal strength based on activation
         signal_strength = self.activation * self.firing_rate
-        
+
         # Send signals to connected nodes
         for target_id, connection_strength in self.connections.items():
             # Find the target node
@@ -228,29 +255,29 @@ class Node:
                 if node.id == target_id:
                     target_node = node
                     break
-            
+
             if target_node and target_node.visible:
                 # Calculate signal based on connection strength
                 signal = signal_strength * connection_strength
-                
+
                 # Add some randomness
                 signal *= random.uniform(0.8, 1.2)
-                
+
                 # Increase target node's activation
                 target_node.activation += signal
-                
+
                 # Cap activation at 1.0
                 target_node.activation = min(1.0, target_node.activation)
-                
+
                 # Create a visual tendril for the signal
                 self._create_signal_tendril(target_node)
-        
+
         # Reset activation after firing
         self.activation = max(0.0, self.activation - 0.5)
-        
+
         # Update last activation time
         self.last_activation_time = time.time()
-    
+
     def _create_firing_particles(self):
         """Create particles that emanate from the node when it fires."""
         num_particles = random.randint(5, 10)
@@ -261,7 +288,7 @@ class Node:
             magnitude = math.sqrt(sum(d*d for d in direction))
             if magnitude > 0:
                 direction = [d/magnitude for d in direction]
-            
+
             # Create particle with position as list
             particle = {
                 'position': list(self.position),  # Ensure position is a list
@@ -271,25 +298,25 @@ class Node:
                 'life': random.uniform(5, 15)  # Particle lifetime
             }
             self.firing_particles.append(particle)
-    
+
     def _update_firing_particles(self):
         """Update firing particles."""
         for particle in list(self.firing_particles):
             # Update position
             for i in range(3):
                 particle['position'][i] += particle['velocity'][i]
-            
+
             # Apply drag
             for i in range(3):
                 particle['velocity'][i] *= 0.9
-            
+
             # Decrease life
             particle['life'] -= 1
-            
+
             # Remove dead particles
             if particle['life'] <= 0:
                 self.firing_particles.remove(particle)
-    
+
     def _create_signal_tendril(self, target_node):
         """Create a visual tendril representing a signal traveling to the target node."""
         tendril = {
@@ -302,20 +329,20 @@ class Node:
             'life': 20  # How long the tendril lasts
         }
         self.signal_tendrils.append(tendril)
-    
+
     def _update_signal_tendrils(self):
         """Update signal tendrils."""
         for tendril in list(self.signal_tendrils):
             # Update progress
             tendril['progress'] += tendril['speed']
-            
+
             # Decrease life
             tendril['life'] -= 1
-            
+
             # Remove completed or dead tendrils
             if tendril['progress'] >= 1.0 or tendril['life'] <= 0:
                 self.signal_tendrils.remove(tendril)
-    
+
     def update_firing_animation(self):
         """Update the firing animation state."""
         if self.is_firing:
@@ -323,13 +350,11 @@ class Node:
             if self.firing_animation_step >= self.firing_animation_duration:
                 self.is_firing = False
                 self.firing_animation_step = 0
-        
-        # Update firing particles
-        self._update_firing_particles()
-        
-        # Update signal tendrils
-        self._update_signal_tendrils()
-    
+                # Update firing particles
+                self._update_firing_particles()
+                # Update signal tendrils
+                self._update_signal_tendrils()
+
     def get_display_size(self):
         """Get the display size of the node, accounting for firing animation."""
         base_size = self.size
@@ -344,7 +369,7 @@ class Node:
                 size_multiplier = 1.5 - (1.5 - 1.0) * ((progress - 0.5) * 2)
             return base_size * size_multiplier
         return base_size
-    
+
     def get_display_color(self):
         """Get the display color of the node, accounting for firing animation."""
         if self.is_firing:
@@ -356,23 +381,22 @@ class Node:
             else:
                 # Transition back to normal color
                 blend_factor = 1.0 - ((progress - 0.5) * 2)
-            
+
             # Parse colors
             normal_color = self._parse_color(self.color)
             firing_color = self._parse_color(self.firing_color)
-            
+
             # Blend colors
             blended_color = [
                 int(normal_color[0] * (1 - blend_factor) + firing_color[0] * blend_factor),
                 int(normal_color[1] * (1 - blend_factor) + firing_color[1] * blend_factor),
                 int(normal_color[2] * (1 - blend_factor) + firing_color[2] * blend_factor)
             ]
-            
+
             # Format as RGB
             return f'rgb({blended_color[0]}, {blended_color[1]}, {blended_color[2]})'
-        
         return self.color
-    
+
     def _parse_color(self, color):
         """Parse a color string into RGB values."""
         if color.startswith('#'):
@@ -391,6 +415,7 @@ class Node:
 
 class PatternDetector:
     """Enhanced pattern recognition system."""
+    
     def __init__(self):
         self.patterns = {}
         self.sequence_memory = deque(maxlen=1000)
@@ -398,7 +423,7 @@ class PatternDetector:
         self.max_pattern_length = 20
 
     def analyze_sequence(self, state):
-        """Analyze network state for patterns.""" 
+        """Analyze network state for patterns."""
         self.sequence_memory.append(state)
         # Use GPU for pattern matching if available
         if cp is not None:
@@ -406,7 +431,7 @@ class PatternDetector:
         return self._cpu_pattern_search()
 
     def _gpu_pattern_search(self):
-        """GPU-accelerated pattern search.""" 
+        """GPU-accelerated pattern search."""
         if not cp:
             return self._cpu_pattern_search()
         try:
@@ -439,7 +464,7 @@ class PatternDetector:
             return self._cpu_pattern_search()
 
     def _cpu_pattern_search(self):
-        """CPU-based pattern search implementation.""" 
+        """CPU-based pattern search implementation."""
         patterns = {}
         history = list(self.sequence_memory)
         for length in range(self.min_pattern_length, self.max_pattern_length):
@@ -453,8 +478,7 @@ class PatternDetector:
                 else:
                     patterns[pattern]['count'] += 1
                     patterns[pattern]['positions'].append(i)
-        
-        return {k: v for k, v in patterns.items() if v['count'] >= 2}
+                return {k: v for k, v in patterns.items() if v['count'] >= 2}
 
 class NeuralNetwork:
     """A neural network with nodes and connections."""
@@ -462,30 +486,31 @@ class NeuralNetwork:
     def __init__(self, max_nodes=200):
         """Initialize an empty neural network."""
         self.nodes = []
-        self.max_nodes = max_nodes
-        self.next_node_id = 0
+        self.graph = nx.Graph()
         self.simulation_steps = 0
+        self.last_save_time = time.time()
+        self.save_interval = 300  # Save every 5 minutes by default
         self.start_time = time.time()
-        self.energy_pool = 1000.0
         self.learning_rate = 0.1
+        self.max_nodes = max_nodes
         self.stats = {
             'node_count': [],
             'visible_nodes': [],
             'connection_count': [],
-            'type_distribution': {t: [] for t in NODE_TYPES},
-            'avg_size': []
+            'avg_size': [],
+            'type_distribution': {t: [] for t in NODE_TYPES}
         }
-    
+
     def add_node(self, visible=True, node_type=None):
         """Add a node to the network and return its ID."""
         if len(self.nodes) >= self.max_nodes:
             return None
-        
+
         node = Node(self.next_node_id, node_type=node_type, visible=visible)
         self.nodes.append(node)
         self.next_node_id += 1
         return node
-    
+
     def step(self):
         """Perform one simulation step."""
         # Update each node
@@ -493,10 +518,9 @@ class NeuralNetwork:
             if node.visible:
                 # Use the new update method that handles position updates, firing, etc.
                 node.update(self)
-        
-        # Increment simulation step counter
-        self.simulation_steps += 1
-    
+                # Increment simulation step counter
+                self.simulation_steps += 1
+
     def record_stats(self):
         """Record current network statistics."""
         # Count visible nodes by type
@@ -504,22 +528,136 @@ class NeuralNetwork:
         type_counts = {t: 0 for t in NODE_TYPES}
         for node in visible_nodes:
             type_counts[node.type] += 1
-        
+
         # Record stats
         self.stats['node_count'].append(len(self.nodes))
         self.stats['visible_nodes'].append(len(visible_nodes))
         self.stats['connection_count'].append(sum(len(n.connections) for n in self.nodes))
-        
+
         # Record type distribution
         for node_type in NODE_TYPES:
             self.stats['type_distribution'][node_type].append(type_counts.get(node_type, 0))
-        
+
         # Record average size
         if visible_nodes:
             avg_size = sum(n.size for n in visible_nodes) / len(visible_nodes)
         else:
             avg_size = 0
         self.stats['avg_size'].append(avg_size)
+
+    def visualize(self, mode='3d'):
+        """Create a visualization of the network."""
+        try:
+            visible_nodes = [n for n in self.nodes if n.visible]
+            if not visible_nodes:
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="No visible nodes",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.5,
+                    showarrow=False
+                )
+                return fig
+            if mode == '3d':
+                return self._create_3d_visualization(visible_nodes)
+            else:
+                return self._create_2d_visualization(visible_nodes)
+        except Exception as e:
+            print(f"Error creating {mode} visualization: {str(e)}")
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error: {str(e)}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False
+            )
+            return fig
+
+    def _create_3d_visualization(self, visible_nodes):
+        """Create a 3D visualization of the network."""
+        # Create node traces
+        node_trace = go.Scatter3d(
+            x=[n.position[0] for n in visible_nodes],
+            y=[n.position[1] for n in visible_nodes],
+            z=[n.position[2] for n in visible_nodes],
+            mode='markers',
+            marker=dict(
+                size=[n.size/5 for n in visible_nodes],
+                color=[n.get_display_color() if hasattr(n, 'get_display_color') else n.properties['color'] for n in visible_nodes],
+                opacity=0.8
+            ),
+            text=[f"Node {n.id} ({n.type})" for n in visible_nodes],
+            hoverinfo='text'
+        )
+        # Create edge traces
+        edge_x = []
+        edge_y = []
+        edge_z = []
+        for node in visible_nodes:
+            for target_id in node.connections:
+                target = next((n for n in visible_nodes if n.id == target_id), None)
+                if target:
+                    edge_x.extend([node.position[0], target.position[0], None])
+                    edge_y.extend([node.position[1], target.position[1], None])
+                    edge_z.extend([node.position[2], target.position[2], None])
+        edge_trace = go.Scatter3d(
+            x=edge_x, y=edge_y, z=edge_z,
+            mode='lines',
+            line=dict(color='#888', width=1),
+            hoverinfo='none'
+        )
+        # Create figure
+        fig = go.Figure(data=[edge_trace, node_trace])
+        fig.update_layout(
+            showlegend=False,
+            scene=dict(
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                zaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            ),
+            margin=dict(l=0, r=0, t=0, b=0)
+        )
+        return fig
+
+    def _create_2d_visualization(self, visible_nodes):
+        """Create a 2D visualization of the network."""
+        # Create node traces
+        node_trace = go.Scatter(
+            x=[n.position[0] for n in visible_nodes],
+            y=[n.position[1] for n in visible_nodes],
+            mode='markers',
+            marker=dict(
+                size=[n.size/3 for n in visible_nodes],
+                color=[n.get_display_color() if hasattr(n, 'get_display_color') else n.properties['color'] for n in visible_nodes],
+                opacity=0.8
+            ),
+            text=[f"Node {n.id} ({n.type})" for n in visible_nodes],
+            hoverinfo='text'
+        )
+        # Create edge traces
+        edge_x = []
+        edge_y = []
+        for node in visible_nodes:
+            for target_id in node.connections:
+                target = next((n for n in visible_nodes if n.id == target_id), None)
+                if target:
+                    edge_x.extend([node.position[0], target.position[0], None])
+                    edge_y.extend([node.position[1], target.position[1], None])
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y,
+            mode='lines',
+            line=dict(color='#888', width=1),
+            hoverinfo='none'
+        )
+        # Create figure
+        fig = go.Figure(data=[edge_trace, node_trace])
+        fig.update_layout(
+            showlegend=False,
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            margin=dict(l=0, r=0, t=0, b=0)
+        )
+        return fig
 
 class BackgroundRenderer:
     """Background renderer for the neural network visualization."""
@@ -530,13 +668,10 @@ class BackgroundRenderer:
         self.running = False
         self.render_thread = None
         self.render_queue = queue.Queue()
-        self.last_render = None
-        self.render_mode = '3d'
-        self.position_history = {}
-        self.smoothed_positions = {}
-        self.max_history_length = 5
-        self.history_weight = 0.7
-    
+        self.latest_visualization = None
+        self.last_render_time = time.time()
+        self.render_interval = 0.1  # Minimum time between renders
+
     def start(self):
         """Start the rendering thread."""
         if not self.running:
@@ -544,136 +679,55 @@ class BackgroundRenderer:
             self.render_thread = threading.Thread(target=self._render_loop)
             self.render_thread.daemon = True
             self.render_thread.start()
-    
+
     def stop(self):
         """Stop the rendering thread."""
         self.running = False
         if self.render_thread:
-            self.render_thread.join(timeout=0.5)
-    
+            self.render_thread.join(timeout=1.0)
+
     def request_render(self, mode='3d'):
         """Request a new render with the given mode."""
-        self.render_mode = mode
         self.render_queue.put(mode)
-    
+
     def get_latest_visualization(self):
         """Get the most recent visualization."""
-        return self.last_render
-    
+        return self.latest_visualization
+
     def _render_loop(self):
-        """Main rendering loop that runs in a background thread."""
+        """Main rendering loop that processes render requests."""
         while self.running:
             try:
-                # Get the next render request, waiting up to 0.1 seconds
-                try:
-                    mode = self.render_queue.get(timeout=0.1)
-                except queue.Empty:
+                # Get next render request with timeout
+                mode = self.render_queue.get(timeout=0.1)
+
+                # Check if enough time has passed since last render
+                current_time = time.time()
+                if current_time - self.last_render_time < self.render_interval:
+                    time.sleep(0.01)
                     continue
-                
+
+                # Check if we have a network and nodes to render
+                if not self.simulator or not self.simulator.network or not self.simulator.network.nodes:
+                    time.sleep(0.1)
+                    continue
+
                 # Create visualization based on mode
-                if mode == '3d':
-                    fig = self._create_3d_visualization()
-                else:
-                    fig = self._create_2d_visualization()
-                
-                # Store the result
-                self.last_render = fig
-                
+                try:
+                    if mode == '3d':
+                        self.latest_visualization = self.simulator.network.visualize(mode='3d')
+                    else:
+                        self.latest_visualization = self.simulator.network.visualize(mode='2d')
+                    self.last_render_time = current_time
+                except Exception as e:
+                    print(f"Error creating visualization: {str(e)}")
+                    time.sleep(0.1)
+
                 # Small delay to prevent excessive CPU usage
                 time.sleep(0.01)
-            
             except Exception as e:
                 print(f"Error in render loop: {str(e)}")
-                time.sleep(0.1)  # Avoid tight loop on errors
-    
-    def _create_3d_visualization(self):
-        """Create a 3D visualization of the network."""
-        try:
-            network = self.simulator.network
-            if not network or not network.nodes:
-                return None
-            
-            # Update position history for smooth transitions
-            current_positions = {}
-            for node in network.nodes:
-                if node.visible:
-                    current_positions[node.id] = node.get_position()
-            
-            # Update history
-            self.position_history[len(self.position_history)] = current_positions
-            if len(self.position_history) > self.max_history_length:
-                self.position_history.pop(0)
-            
-            # Calculate smoothed positions
-            self.smoothed_positions = {}
-            for node_id in current_positions:
-                positions = []
-                weights = []
-                for t, pos_dict in self.position_history.items():
-                    if node_id in pos_dict:
-                        positions.append(pos_dict[node_id])
-                        weights.append(self.history_weight ** (len(self.position_history) - t - 1))
-                
-                if positions:
-                    # Calculate weighted average
-                    total_weight = sum(weights)
-                    smoothed_pos = [0, 0, 0]
-                    for pos, weight in zip(positions, weights):
-                        for i in range(3):
-                            smoothed_pos[i] += pos[i] * weight / total_weight
-                    self.smoothed_positions[node_id] = smoothed_pos
-            
-            # Create the visualization using smoothed positions
-            return network.visualize(mode='3d')
-        
-        except Exception as e:
-            print(f"Error creating 3D visualization: {str(e)}")
-            return None
-    
-    def _create_2d_visualization(self):
-        """Create a 2D visualization of the network."""
-        try:
-            network = self.simulator.network
-            if not network or not network.nodes:
-                return None
-            
-            # Update position history for smooth transitions (only x and y)
-            current_positions = {}
-            for node in network.nodes:
-                if node.visible:
-                    pos = node.get_position()
-                    current_positions[node.id] = [pos[0], pos[1]]
-            
-            # Update history
-            self.position_history[len(self.position_history)] = current_positions
-            if len(self.position_history) > self.max_history_length:
-                self.position_history.pop(0)
-            
-            # Calculate smoothed positions
-            self.smoothed_positions = {}
-            for node_id in current_positions:
-                positions = []
-                weights = []
-                for t, pos_dict in self.position_history.items():
-                    if node_id in pos_dict:
-                        positions.append(pos_dict[node_id])
-                        weights.append(self.history_weight ** (len(self.position_history) - t - 1))
-                
-                if positions:
-                    # Calculate weighted average
-                    total_weight = sum(weights)
-                    smoothed_pos = [0, 0]
-                    for pos, weight in zip(positions, weights):
-                        for i in range(2):
-                            smoothed_pos[i] += pos[i] * weight / total_weight
-                    self.smoothed_positions[node_id] = smoothed_pos
-            
-            # Create the visualization using smoothed positions
-            return network.visualize(mode='2d')
-        
-        except Exception as e:
-            print(f"Error creating 2D visualization: {str(e)}")
-            return None
+                time.sleep(0.5)  # Longer delay on error
 
 class NetworkSimulator:
     """Manages the simulation of a neural network."""
@@ -696,17 +750,17 @@ class NetworkSimulator:
         self.max_nodes = max_nodes
         self.node_generation_interval_range = (2, 10)  # Random interval between node generation in seconds
         self.next_node_generation_time = time.time() + random.uniform(*self.node_generation_interval_range)
-        
+
         # Start with a single node
         if not self.network.nodes:
             self._add_initial_node()
-    
+
     def _add_initial_node(self):
         """Add a single initial node to the network."""
         # Add a single node of a random type
         node_type = random.choice(list(NODE_TYPES.keys()))
         self.network.add_node(visible=True, node_type=node_type)
-        
+
         # Position it at the center
         if self.network.nodes:
             self.network.nodes[0].position = [0.0, 0.0, 0.0]
@@ -718,77 +772,77 @@ class NetworkSimulator:
             ]
             # Set initial activation to trigger firing
             self.network.nodes[0].activation = 0.9
-    
+
     def start(self, steps_per_second=1.0):
         """Start the simulation with the given number of steps per second."""
         if self.running:
             return
-        
+
         self.running = True
         self.steps_per_second = steps_per_second
         self.simulation_thread = threading.Thread(target=self._run_simulation)
         self.simulation_thread.daemon = True
         self.simulation_thread.start()
-        
+
         # Start the renderer
         self.renderer.start()
-    
+
     def stop(self):
         """Stop the simulation."""
         self.running = False
         if self.simulation_thread:
             self.simulation_thread.join(timeout=1.0)
-        
+
         # Stop the renderer
         self.renderer.stop()
-    
+
     def _run_simulation(self):
         """Run the simulation loop."""
         last_time = time.time()
         step_interval = 1.0 / self.steps_per_second
-        
+
         # Cache visualization settings
         self.cached_viz_mode = '3d'
         self.cached_simulation_speed = 1.0
-        
+
         try:
             while self.running:
                 current_time = time.time()
                 elapsed = current_time - last_time
-                
+
                 # Process commands
                 self._process_commands()
-                
+
                 # Check if it's time for a step
                 if elapsed >= step_interval:
                     # Update the network
                     self.network.step()
-                    
+
                     # Process node lifetimes
                     self._process_node_lifetimes()
-                    
+
                     # Auto-generate nodes if enabled
                     self._auto_generate_nodes(current_time)
-                    
+
                     # Update explosion particles
                     self._update_explosion_particles()
-                    
+
                     # Record statistics
                     self.network.record_stats()
-                    
+
                     # Mark that a render is needed
                     self.render_needed = True
-                    
+
                     # Update last step time
                     last_time = current_time
-                
+
                 # Request a render if needed
                 if self.render_needed and current_time - self.last_render_time > 0.1:
                     # Use cached visualization mode
                     self.renderer.request_render(mode=self.cached_viz_mode)
                     self.last_render_time = current_time
                     self.render_needed = False
-                
+
                 # Sleep to avoid using too much CPU
                 time.sleep(0.01)
         except Exception as e:
@@ -796,31 +850,31 @@ class NetworkSimulator:
             print(error_msg)
             traceback.print_exc()
             self.results_queue.put({"error": error_msg, "traceback": traceback.format_exc()})
-    
+
     def _auto_generate_nodes(self, current_time):
         """Automatically generate new nodes with random timing if enabled."""
         # Use instance variable instead of accessing session state directly
         auto_generate = self.auto_generate_nodes
-        
+
         if not auto_generate:
             return
-        
+
         # Check if we've reached the maximum number of nodes
         if len(self.network.nodes) >= self.max_nodes:
             return
-        
+
         # Check if it's time to generate a new node
         if current_time >= self.next_node_generation_time:
             # Add a new node
             node_type = random.choice(list(NODE_TYPES.keys()))
             self.network.add_node(visible=True, node_type=node_type)
-            
+
             # Set the next generation time
             self.next_node_generation_time = current_time + random.uniform(*self.node_generation_interval_range)
-            
+
             # Log the node generation
             print(f"Generated new {node_type} node. Total nodes: {len(self.network.nodes)}")
-            
+
             # Try to connect the new node to existing nodes
             if len(self.network.nodes) > 1:
                 new_node = self.network.nodes[-1]
@@ -834,7 +888,7 @@ class NetworkSimulator:
                     new_node.connect(target_node)
                     if random.random() < 0.5:
                         target_node.connect(new_node)
-    
+
     def _process_node_lifetimes(self):
         """Process node lifetimes and handle node death."""
         # Update lifetimes for all visible nodes
@@ -844,7 +898,7 @@ class NetworkSimulator:
                 if node_id not in self.node_lifetimes:
                     self.node_lifetimes[node_id] = 0
                 self.node_lifetimes[node_id] += 1
-                
+
                 # Check for node death conditions
                 if len(node.connections) == 0 and self.node_lifetimes[node_id] > 100:
                     # Node has no connections for too long, make it "die"
@@ -852,7 +906,7 @@ class NetworkSimulator:
                         node.visible = False
                         self._create_explosion(node)
                         print(f"Node {node_id} died due to isolation")
-    
+
     def _create_explosion(self, node):
         """Create an explosion effect when a node dies."""
         num_particles = random.randint(10, 20)
@@ -863,7 +917,7 @@ class NetworkSimulator:
             magnitude = math.sqrt(sum(d*d for d in direction))
             if magnitude > 0:
                 direction = [d/magnitude for d in direction]
-            
+
             # Create particle
             particle = {
                 'position': node.position.copy() if isinstance(node.position, list) else list(node.position),
@@ -873,40 +927,40 @@ class NetworkSimulator:
                 'life': random.uniform(10, 30)  # Particle lifetime
             }
             self.explosion_particles.append(particle)
-    
+
     def _update_explosion_particles(self):
         """Update explosion particles."""
         for particle in list(self.explosion_particles):
             # Update position
             for i in range(3):
                 particle['position'][i] += particle['velocity'][i]
-            
+
             # Apply drag
             for i in range(3):
                 particle['velocity'][i] *= 0.95
-            
+
             # Decrease life
             particle['life'] -= 1
-            
+
             # Remove dead particles
             if particle['life'] <= 0:
                 self.explosion_particles.remove(particle)
-    
+
     def needs_render(self):
         """Check if a render is needed."""
         return self.render_needed
-    
+
     def mark_rendered(self):
         """Mark that a render has been completed."""
         self.render_needed = False
-    
+
     def get_rendering_state(self):
         """Get the current rendering state."""
         return {
             'network': self.network,
             'explosion_particles': self.explosion_particles
         }
-    
+
     def _process_commands(self):
         """Process commands from the command queue."""
         while not self.command_queue.empty():
@@ -916,16 +970,16 @@ class NetworkSimulator:
                 self.results_queue.put(result)
             except queue.Empty:
                 break
-    
+
     def _handle_command(self, cmd):
         """Handle a command and return the result."""
         cmd_type = cmd.get('type', '')
-        
+
         if cmd_type == 'add_node':
             node_type = cmd.get('node_type', None)
             node = self.network.add_node(node_type=node_type)
             return {'success': True, 'node_id': node.id}
-        
+
         elif cmd_type == 'remove_node':
             node_id = cmd.get('node_id')
             for i, node in enumerate(self.network.nodes):
@@ -934,40 +988,40 @@ class NetworkSimulator:
                     self._create_explosion(node)
                     return {'success': True}
             return {'success': False, 'error': f'Node {node_id} not found'}
-        
+
         elif cmd_type == 'clear':
             self.network.nodes = []
             self.explosion_particles = []
             self.node_lifetimes = {}
             return {'success': True}
-        
+
         elif cmd_type == 'reset':
             self.network = NeuralNetwork(max_nodes=self.max_nodes)
             self.explosion_particles = []
             self.node_lifetimes = {}
             self._add_initial_node()  # Start with a single node
             return {'success': True}
-        
+
         elif cmd_type == 'set_auto_generate':
             self.auto_generate_nodes = cmd.get('value', False)
             return {'success': True}
-        
+
         elif cmd_type == 'set_generation_rate':
             self.node_generation_rate = cmd.get('value', 0.1)
             return {'success': True}
-        
+
         elif cmd_type == 'set_max_nodes':
             self.max_nodes = cmd.get('value', 200)
             self.network.max_nodes = self.max_nodes
             return {'success': True}
-        
+
         else:
             return {'success': False, 'error': f'Unknown command: {cmd_type}'}
-    
+
     def send_command(self, command):
         """Send a command to the simulator."""
         self.command_queue.put(command)
-    
+
     def get_latest_results(self):
         """Get the latest results from the results queue."""
         results = []
@@ -978,11 +1032,11 @@ class NetworkSimulator:
             except queue.Empty:
                 break
         return results
-    
+
     def save(self, filename=None):
         """Save the current state of the network."""
         return self.network.save_state(filename)
-    
+
     @classmethod
     def load(cls, filename):
         """Load a network from a saved state."""
@@ -991,7 +1045,7 @@ class NetworkSimulator:
 
 # Define helper functions
 def parse_contents(contents, filename):
-    """Parse uploaded file contents.""" 
+    """Parse uploaded file contents."""
     if contents is None:
         return None
     content_type, content_string = contents.split(',')
@@ -1006,7 +1060,7 @@ def parse_contents(contents, filename):
     return None
 
 def list_saved_simulations(directory='network_saves'):
-    """List all available saved simulations.""" 
+    """List all available saved simulations."""
     if not os.path.exists(directory):
         os.makedirs(directory)
     files = [f for f in os.listdir(directory) if f.startswith('network_state_') and f.endswith('.pkl')]
@@ -1014,7 +1068,7 @@ def list_saved_simulations(directory='network_saves'):
     return [os.path.join(directory, f) for f in files]
 
 def create_requirements_file():
-    """Create requirements.txt file with dependencies.""" 
+    """Create requirements.txt file with dependencies."""
     requirements = [
         "streamlit>=1.13.0",
         "numpy>=1.19.0",
@@ -1027,7 +1081,7 @@ def create_requirements_file():
         f.write("\n".join(requirements))
 
 def _ensure_node_signals():
-    """Ensure all nodes have required signal attributes.""" 
+    """Ensure all nodes have required signal attributes."""
     for node in st.session_state.simulator.network.nodes:
         if not hasattr(node, 'signals'):
             node.signals = []
@@ -1039,10 +1093,10 @@ def _ensure_node_signals():
             node.activated = False
 
 def update_display():
-    """Update the visualization using pre-rendered figures from the background renderer.""" 
+    """Update the visualization using pre-rendered figures from the background renderer."""
     try:
         _ensure_node_signals()
-        
+
         # Get pre-rendered figures from renderer
         renderer = st.session_state.simulator.renderer
         network_fig = renderer.get_latest_visualization()
@@ -1050,15 +1104,15 @@ def update_display():
         stats_fig = renderer.get_latest_visualization()
         pattern_fig = renderer.get_latest_visualization()
         strength_fig = renderer.get_latest_visualization()
-        
+
         # Request initial render if figures aren't available
         if not network_fig or not activity_fig:
             renderer.request_render(mode=st.session_state.viz_mode, force=True)
-            
+
         # Update network summary on every frame (lightweight)
         if hasattr(st.session_state.simulator.network, 'get_network_summary'):
             st.session_state.network_summary = st.session_state.simulator.network.get_network_summary()
-        
+
         # Create main visualization layout
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -1069,65 +1123,63 @@ def update_display():
                     st.plotly_chart(network_fig, use_container_width=True, key="network_viz")
                 else:
                     st.info("Preparing network visualization...")
-        
-        with col2:
-            st.header("Activity Heatmap")
-            with st.container():
-                if activity_fig:
-                    st.plotly_chart(activity_fig, use_container_width=True, key="activity_viz")
-                else:
-                    st.info("Preparing activity heatmap...")
-        
+            with col2:
+                st.header("Activity Heatmap")
+                with st.container():
+                    if activity_fig:
+                        st.plotly_chart(activity_fig, use_container_width=True, key="activity_viz")
+                    else:
+                        st.info("Preparing activity heatmap...")
+
         # Network status summary
         if hasattr(st.session_state, 'network_summary'):
             summary = st.session_state.network_summary
             st.markdown(f"""
-            **Network Status**: {summary['visible_nodes']} active nodes of {summary['total_nodes']} total  
-            **Connections**: {summary['total_connections']} ({summary['avg_connections']} avg per node)  
-            **Runtime**: {summary['runtime']}
+            **Network Status**: {summary['visible_nodes']} active nodes of {summary['total_nodes']} total
+              **Connections**: {summary['total_connections']} ({summary['avg_connections']} avg per node)
+              **Runtime**: {summary['runtime']}
             """)
-        
+
         # Create tabs for additional visualizations
         tab1, tab2, tab3 = st.tabs(["Statistics", "Patterns", "Connection Strength"])
-        
+
         with tab1:
             if stats_fig:
                 st.plotly_chart(stats_fig, use_container_width=True, key="stats_viz")
             else:
                 st.info("Preparing statistics...")
-        
+
         with tab2:
             if pattern_fig:
                 st.plotly_chart(pattern_fig, use_container_width=True, key="pattern_viz")
             else:
                 st.info("Analyzing patterns...")
-                
+
         with tab3:
             if strength_fig:
                 st.plotly_chart(strength_fig, use_container_width=True, key="strength_viz")
             else:
                 st.info("Analyzing connections...")
-        
+
         # Reset error counter on successful render
         if 'viz_error_count' in st.session_state:
             st.session_state.viz_error_count = 0
-            
     except Exception as e:
         # Track visualization errors
         if 'viz_error_count' not in st.session_state:
             st.session_state.viz_error_count = 0
         st.session_state.viz_error_count += 1
-        
+
         st.error(f"Visualization error ({st.session_state.viz_error_count}): {str(e)[:200]}...")
-        
+
         # If we have too many errors, try to recover
         if st.session_state.viz_error_count > 3:
             try:
                 # Force a full re-render
                 renderer = st.session_state.simulator.renderer
-                renderer.last_render = None  # Clear cache
+                renderer.latest_visualization = None  # Clear cache
                 renderer.request_render(mode=st.session_state.viz_mode)
-                
+
                 if RESILIENCE_AVAILABLE and st.session_state.viz_error_count > 5:
                     recover_from_error(f"Persistent visualization error: {str(e)}")
                     st.session_state.viz_error_count = 0
@@ -1135,7 +1187,7 @@ def update_display():
                 st.error(f"Recovery failed: {str(recovery_error)[:100]}...")
 
 def create_ui():
-    """Create the main Streamlit UI.""" 
+    """Create the main Streamlit UI."""
     viz_container = st.empty()
     stats_container = st.empty()
     with st.sidebar:
@@ -1161,22 +1213,22 @@ def create_ui():
         st.markdown("## Parameters")
         speed = st.slider("Simulation Speed", 0.2, 10.0, 1.0, 0.2,
                          help="Control how fast the simulation runs")
-        st.session_state.auto_node_generation = st.checkbox("Auto-generate Nodes", 
-                                                           value=st.session_state.get('auto_node_generation', True),
+        st.session_state.auto_node_generation = st.checkbox("Auto-generate Nodes",
+                                                            value=st.session_state.get('auto_node_generation', True),
                                                            help="Automatically generate new nodes over time")
         st.session_state.node_generation_rate = st.number_input(
-            "Generation Rate", 
-            min_value=0.01, 
-            max_value=1.0, 
-            value=st.session_state.get('node_generation_rate', 0.05),
+            "Generation Rate",
+             min_value=0.01,
+             max_value=1.0,
+             value=st.session_state.get('node_generation_rate', 0.05),
             step=0.01,
             help="Probability of new node per step"
         )
         st.session_state.max_nodes = st.number_input(
-            "Max Nodes", 
-            min_value=10, 
-            max_value=500, 
-            value=st.session_state.get('max_nodes', 200),
+            "Max Nodes",
+             min_value=10,
+             max_value=500,
+             value=st.session_state.get('max_nodes', 200),
             step=10,
             help="Maximum number of nodes"
         )
@@ -1184,25 +1236,25 @@ def create_ui():
                                  help="Controls how quickly nodes learn from connections")
         st.markdown("## Visualization")
         viz_mode = st.radio(
-            "Display Mode", 
-            options=['3d', '2d'], 
-            index=0 if st.session_state.viz_mode == '3d' else 1, 
-            help="Choose between 3D and 2D visualization modes"
+            "Display Mode",
+             options=['3d', '2d'],
+             index=0 if st.session_state.viz_mode == '3d' else 1,
+             help="Choose between 3D and 2D visualization modes"
         )
         st.session_state.viz_mode = viz_mode
         st.session_state.display_update_interval = st.slider(
-            "Display Update Interval (sec)", 
-            min_value=0.1, 
-            max_value=2.0, 
-            value=st.session_state.get('display_update_interval', 0.5),
+            "Display Update Interval (sec)",
+             min_value=0.1,
+             max_value=2.0,
+             value=st.session_state.get('display_update_interval', 0.5),
             step=0.1,
             help="How often to update the visualization (lower = smoother but more CPU intensive)"
         )
         st.session_state.refresh_rate = st.slider(
-            "Visualization Refresh Rate", 
-            min_value=1, 
-            max_value=20, 
-            value=st.session_state.get('refresh_rate', 5),
+            "Visualization Refresh Rate",
+             min_value=1,
+             max_value=20,
+             value=st.session_state.get('refresh_rate', 5),
             step=1,
             help="How many frames to wait before refreshing visuals (higher = less flickering but less responsiveness)"
         )
@@ -1241,15 +1293,15 @@ def create_ui():
                 st.success(f"Loaded network from {selected_file}")
             st.markdown("### Tendril Visualization")
             show_tendrils = st.checkbox(
-                "Show Node Connections", 
-                value=st.session_state.get('show_tendrils', True),
+                "Show Node Connections",
+                 value=st.session_state.get('show_tendrils', True),
                 help="Show the tendrils fired by nodes when attempting connections"
             )
             tendril_duration = st.slider(
-                "Tendril Duration", 
-                min_value=10, 
-                max_value=100, 
-                value=st.session_state.get('tendril_duration', 30),  # Increased default duration
+                "Tendril Duration",
+                 min_value=10,
+                 max_value=100,
+                 value=st.session_state.get('tendril_duration', 30),  # Increased default duration
                 step=5,
                 help="How long tendrils remain visible for better visualization"
             )
@@ -1257,46 +1309,46 @@ def create_ui():
             st.session_state.tendril_duration = tendril_duration
             if hasattr(st.session_state.simulator, 'renderer'):
                 st.session_state.simulator.renderer.set_tendril_options(
-                    visible=show_tendrils, 
-                    duration=tendril_duration
+                    visible=show_tendrils,
+                     duration=tendril_duration
                 )
-            use_dark_mode = st.checkbox("Use Dark Mode", value=False, 
-                                        help="Toggle between light and dark theme for visualizations")
+            use_dark_mode = st.checkbox("Use Dark Mode", value=False,
+                                         help="Toggle between light and dark theme for visualizations")
             st.session_state.use_dark_mode = use_dark_mode
             if st.session_state.use_dark_mode:
                 st.session_state.force_refresh = True
             buffered_rendering = st.checkbox(
-                "Use Buffered Rendering", 
-                value=st.session_state.get('buffered_rendering', True),
+                "Use Buffered Rendering",
+                 value=st.session_state.get('buffered_rendering', True),
                 help="Process simulation at full speed but update visuals at a controlled rate for better performance"
             )
             st.session_state.buffered_rendering = buffered_rendering
             if st.session_state.buffered_rendering:
                 st.session_state.simulator.renderer.set_buffer_options(
-                    enabled=buffered_rendering, 
-                    size=st.session_state.get('buffer_size', 5)
+                    enabled=buffered_rendering,
+                     size=st.session_state.get('buffer_size', 5)
                 )
             st.session_state.render_frequency = st.slider(
-                "Steps Per Render", 
-                min_value=1, 
-                max_value=20, 
-                value=st.session_state.get('render_frequency', 5),
+                "Steps Per Render",
+                 min_value=1,
+                 max_value=20,
+                 value=st.session_state.get('render_frequency', 5),
                 step=1,
                 help="How many simulation steps to process before updating the visualization"
             )
             st.session_state.simulator.render_frequency = st.session_state.render_frequency
             st.session_state.render_interval = st.slider(
-                "Minimum Seconds Between Renders", 
-                min_value=0.1, 
-                max_value=2.0, 
-                value=st.session_state.get('render_interval', 0.5),
+                "Minimum Seconds Between Renders",
+                 min_value=0.1,
+                 max_value=2.0,
+                 value=st.session_state.get('render_interval', 0.5),
                 step=0.1,
                 help="Minimum time between visual updates, regardless of simulation speed"
             )
             st.session_state.simulator.render_interval = st.session_state.render_interval
 
 def _initialize_session_state():
-    """Initialize all session state variables.""" 
+    """Initialize all session state variables."""
     initial_states = {
         'animation_enabled': True,
         'simulation_speed': 1.0,
@@ -1331,7 +1383,7 @@ def _initialize_session_state():
         st.session_state.simulator.network.add_node(visible=True)
 
 def initialize_app():
-    """Initialize the application with error handling.""" 
+    """Initialize the application with error handling."""
     try:
         if not os.path.exists("requirements.txt"):
             create_requirements_file()
@@ -1351,19 +1403,19 @@ def initialize_app():
                 st.error("Could not recover from error. Please restart the application.")
 
 def run_simulation_loop():
-    """Main simulation loop with error handling.""" 
+    """Main simulation loop with error handling."""
     try:
         if st.session_state.simulation_running:
             current_time = time.time()
             display_elapsed = current_time - st.session_state.get('last_display_update', 0)
-            
+
             if display_elapsed > st.session_state.display_update_interval:
                 st.session_state.frame_count += 1
                 st.session_state.last_display_update = current_time
-                
+
                 # Check if we should refresh visuals based on refresh rate
                 refresh_needed = (st.session_state.frame_count % st.session_state.refresh_rate == 0) or st.session_state.force_refresh
-                
+
                 if refresh_needed:
                     try:
                         update_display()
@@ -1373,33 +1425,32 @@ def run_simulation_loop():
                         if not hasattr(st.session_state, 'error_count'):
                             st.session_state.error_count = 0
                         st.session_state.error_count += 1
-                        
+
                         if st.session_state.error_count > 5:
                             st.session_state.force_refresh = True
                             st.session_state.error_count = 0
-                            
+
                             # Try to recover using resilience module
                             if RESILIENCE_AVAILABLE:
                                 recover_from_error(f"Display error: {str(e)}")
-                
-                time.sleep(max(0.1, st.session_state.display_update_interval / 2))
+                                time.sleep(max(0.1, st.session_state.display_update_interval / 2))
                 st.rerun()
         else:
             # When paused, ensure a render is requested at regular intervals
             current_time = time.time()
             last_refresh = st.session_state.get('last_visual_refresh', 0)
-            
+
             if current_time - last_refresh > 2.0:  # Refresh every 2 seconds when paused
                 if 'simulator' in st.session_state and hasattr(st.session_state.simulator, 'renderer'):
                     st.session_state.simulator.renderer.request_render(mode=st.session_state.viz_mode)
                     st.session_state.last_visual_refresh = current_time
-                    
-            time.sleep(0.1)
+
+                time.sleep(0.1)
             st.rerun()
     except Exception as e:
         st.error(f"Simulation loop error: {str(e)}")
         st.session_state.simulation_running = False
-        
+
         # Try to create a snapshot for recovery
         if RESILIENCE_AVAILABLE:
             recover_from_error(f"Simulation loop error: {str(e)}")
@@ -1408,17 +1459,17 @@ def auto_populate_nodes(network, count=10):
     """Add multiple nodes of different types to kickstart the network."""
     # Make sure to add essential node types for a balanced network
     essential_types = ['explorer', 'connector', 'memory']
-    
+
     # Add one of each essential type first
     for node_type in essential_types:
         network.add_node(visible=True, node_type=node_type)
-    
+
     # Add remaining random nodes to reach count
     remaining = max(0, count - len(essential_types))
     for _ in range(remaining):
         node_type = random.choice(list(NODE_TYPES.keys()))
         network.add_node(visible=True, node_type=node_type)
-    
+
     # Create some initial connections between nodes
     visible_nodes = [n for n in network.nodes if n.visible]
     if len(visible_nodes) >= 2:
@@ -1427,8 +1478,7 @@ def auto_populate_nodes(network, count=10):
             for target in targets:
                 if node.id != target.id:
                     node.connect(target)
-    
-    return network
+        return network
 
 if __name__ == "__main__":
     initialize_app()
