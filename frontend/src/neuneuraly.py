@@ -38,7 +38,8 @@ NODE_TYPES = {
         'firing_rate': (0.2, 0.5),
         'decay_rate': (0.03, 0.08),
         'connection_strength': 1.5,
-        'resurrection_chance': 0.15
+        'resurrection_chance': 0.15,
+        'spontaneous_firing': 0.03
     },
     'memory': {
         'color': '#9B59B6',
@@ -46,7 +47,8 @@ NODE_TYPES = {
         'firing_rate': (0.05, 0.15),
         'decay_rate': (0.01, 0.03),
         'connection_strength': 1.2,
-        'resurrection_chance': 0.25
+        'resurrection_chance': 0.25,
+        'spontaneous_firing': 0.01
     },
     'connector': {
         'color': '#33A8FF',
@@ -54,7 +56,27 @@ NODE_TYPES = {
         'firing_rate': (0.1, 0.3),
         'decay_rate': (0.02, 0.05),
         'connection_strength': 2.0,
-        'resurrection_chance': 0.2
+        'resurrection_chance': 0.2,
+        'spontaneous_firing': 0.02
+    },
+    'inhibitor': {
+        'color': '#27AE60',
+        'size_range': (70, 150),
+        'firing_rate': (0.1, 0.2),
+        'decay_rate': (0.02, 0.06),
+        'connection_strength': -1.0,  # Negative strength to inhibit connected nodes
+        'resurrection_chance': 0.1,
+        'spontaneous_firing': 0.02
+    },
+    'processor': {
+        'color': '#F1C40F',
+        'size_range': (60, 170),
+        'firing_rate': (0.15, 0.35),
+        'decay_rate': (0.02, 0.04),
+        'connection_strength': 1.8,
+        'resurrection_chance': 0.15,
+        'spontaneous_firing': 0.025,
+        'signal_transformation': True  # Special ability to transform signals
     }
 }
 
@@ -241,53 +263,64 @@ class Node:
         self.position = pos
 
     def fire(self, network):
-        """Fire the node, sending signals to connected nodes."""
+        """Fire the node, activating connected nodes."""
         if not self.visible:
             return
-
-        # Record firing
-        self.firing_history.append(time.time())
-
-        # Set firing animation state
+        
+        # Mark as firing for animation
         self.is_firing = True
         self.firing_animation_step = 0
-
-        # Create firing particles
+        self.last_fired = network.simulation_steps
+        self.firing_history.append(network.simulation_steps)
+        
+        # Create firing particles for visualization
         self._create_firing_particles()
-
-        # Calculate signal strength based on activation
-        signal_strength = self.activation * self.firing_rate
-
-        # Send signals to connected nodes
-        for target_id, connection_strength in self.connections.items():
-            # Find the target node
-            target_node = None
-            for node in network.nodes:
-                if node.id == target_id:
-                    target_node = node
-                    break
-
-            if target_node and target_node.visible:
-                # Calculate signal based on connection strength
-                signal = signal_strength * connection_strength
-
-                # Add some randomness
-                signal *= random.uniform(0.8, 1.2)
-
-                # Increase target node's activation
-                target_node.activation += signal
-
-                # Cap activation at 1.0
-                target_node.activation = min(1.0, target_node.activation)
-
-                # Create a visual tendril for the signal
-                self._create_signal_tendril(target_node)
-
+        
+        # Get all connected nodes
+        connected_nodes = []
+        for conn_id, strength in self.connections.items():
+            if conn_id < len(network.nodes):
+                connected_nodes.append((network.nodes[conn_id], strength))
+        
+        # Special behavior for inhibitor nodes
+        if self.type == 'inhibitor':
+            # Inhibitor nodes reduce activation of connected nodes
+            for target, strength in connected_nodes:
+                if target.visible:
+                    # Reduce activation (strength is negative for inhibitors)
+                    target.activation = max(0, target.activation + strength * 0.5)
+                    # Create signal tendril for visualization
+                    self._create_signal_tendril(target)
+        
+        # Special behavior for processor nodes
+        elif self.type == 'processor':
+            # Processor nodes transform signals before passing them on
+            # They activate fewer nodes but with higher intensity
+            if connected_nodes:
+                # Select a subset of connected nodes to activate
+                selected_nodes = random.sample(
+                    connected_nodes, 
+                    min(len(connected_nodes), max(1, len(connected_nodes) // 2))
+                )
+                for target, strength in selected_nodes:
+                    if target.visible:
+                        # Enhanced activation
+                        target.activation = min(1.0, target.activation + strength * 1.5)
+                        # Create signal tendril for visualization
+                        self._create_signal_tendril(target)
+        
+        # Default behavior for other node types
+        else:
+            # Activate connected nodes
+            for target, strength in connected_nodes:
+                if target.visible:
+                    # Increase activation based on connection strength
+                    target.activation = min(1.0, target.activation + strength * 0.3)
+                    # Create signal tendril for visualization
+                    self._create_signal_tendril(target)
+        
         # Reset activation after firing
-        self.activation = max(0.0, self.activation - 0.5)
-
-        # Update last activation time
-        self.last_activation_time = time.time()
+        self.activation = 0.0
 
     def _create_firing_particles(self):
         """Create particles that emanate from the node when it fires."""
@@ -733,11 +766,14 @@ class BackgroundRenderer:
                         self.latest_visualization = self.simulator.network.visualize(mode='2d')
                     self.last_render_time = current_time
                 except Exception as e:
-                    print(f"Error creating visualization: {str(e)}")
-                    time.sleep(0.1)
+                    print(f"Error creating {mode} visualization: {str(e)}")
+                    time.sleep(0.1)  # Longer delay on error
 
                 # Small delay to prevent excessive CPU usage
                 time.sleep(0.01)
+            except queue.Empty:
+                # No render request, just wait a bit
+                time.sleep(0.05)
             except Exception as e:
                 print(f"Error in render loop: {str(e)}")
                 time.sleep(0.5)  # Longer delay on error
@@ -763,6 +799,10 @@ class NetworkSimulator:
         self.max_nodes = max_nodes
         self.node_generation_interval_range = (2, 10)  # Random interval between node generation in seconds
         self.next_node_generation_time = time.time() + random.uniform(*self.node_generation_interval_range)
+        
+        # Initialize cached visualization settings
+        self.cached_viz_mode = '3d'  # Default visualization mode
+        self.cached_simulation_speed = 1.0  # Default simulation speed
 
         # Start with a single node
         if not self.network.nodes:
@@ -814,10 +854,6 @@ class NetworkSimulator:
         last_time = time.time()
         step_interval = 1.0 / self.steps_per_second
 
-        # Cache visualization settings
-        self.cached_viz_mode = '3d'
-        self.cached_simulation_speed = 1.0
-
         try:
             while self.running:
                 current_time = time.time()
@@ -851,7 +887,7 @@ class NetworkSimulator:
 
                 # Request a render if needed
                 if self.render_needed and current_time - self.last_render_time > 0.1:
-                    # Use cached visualization mode
+                    # Use cached visualization mode to avoid accessing session_state directly
                     self.renderer.request_render(mode=self.cached_viz_mode)
                     self.last_render_time = current_time
                     self.render_needed = False
@@ -1387,6 +1423,13 @@ def _initialize_session_state():
         'max_nodes': 200,
         'frame_count': 0,
         'display_update_interval': 0.5,
+        'auto_refresh': True,  # Enable auto-refresh by default
+        'refresh_interval': 0.5,  # Default refresh interval in seconds
+        'auto_generate_nodes': True,  # Enable auto-generation of nodes by default
+        'learning_rate': 0.1,  # Default learning rate
+        'energy_decay_rate': 0.05,  # Default energy decay rate
+        'connection_threshold': 0.5,  # Default connection threshold
+        'last_render_time': time.time(),  # Track the last render time
     }
     for key, value in initial_states.items():
         if key not in st.session_state:
@@ -1394,6 +1437,11 @@ def _initialize_session_state():
     if 'simulator' not in st.session_state:
         st.session_state.simulator = NetworkSimulator()
         st.session_state.simulator.network.add_node(visible=True)
+        # Set simulator properties from session state
+        st.session_state.simulator.cached_viz_mode = st.session_state.viz_mode
+        st.session_state.simulator.steps_per_second = st.session_state.simulation_speed
+        st.session_state.simulator.auto_generate_nodes = st.session_state.auto_generate_nodes
+        st.session_state.simulator.max_nodes = st.session_state.max_nodes
 
 def initialize_app():
     """Initialize the application with error handling."""

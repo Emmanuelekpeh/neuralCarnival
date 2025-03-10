@@ -244,9 +244,12 @@ def _display_simulation_interface():
         # Check if simulator exists
         if st.session_state.simulator is None:
             st.warning("Simulator not initialized. Click the button below to start.")
-            if st.button("Initialize Simulator"):
+            if st.button("Initialize Simulator", key="init_sim_button"):
                 if _start_simulation():
                     st.success("Simulator initialized successfully!")
+                    # Force a rerun immediately after initialization to load the interface
+                    time.sleep(0.1)
+                    st.rerun()
                 else:
                     st.error("Failed to initialize simulator.")
             return
@@ -260,16 +263,19 @@ def _display_simulation_interface():
             
             # Start/Stop button
             if st.session_state.simulator.running:
-                if st.button("Stop Simulation"):
+                if st.button("Stop Simulation", key="stop_sim_button"):
                     _stop_simulation()
                     st.success("Simulation stopped.")
             else:
-                if st.button("Start Simulation"):
+                if st.button("Start Simulation", key="start_sim_button"):
                     _start_simulation()
                     st.success("Simulation started.")
+                    # Force a rerun immediately after starting to update the interface
+                    time.sleep(0.1)
+                    st.rerun()
             
             # Add node button
-            if st.button("Add Node"):
+            if st.button("Add Node", key="add_node_button"):
                 if st.session_state.simulator:
                     node_type = random.choice(list(NODE_TYPES.keys()))
                     st.session_state.simulator.send_command({
@@ -281,13 +287,13 @@ def _display_simulation_interface():
             # Clear and reset buttons
             col1a, col1b = st.columns(2)
             with col1a:
-                if st.button("Clear Simulation"):
+                if st.button("Clear Simulation", key="clear_sim_button"):
                     if st.session_state.simulator:
                         st.session_state.simulator.send_command({'type': 'clear'})
                         st.success("Simulation cleared.")
             
             with col1b:
-                if st.button("Reset Simulation"):
+                if st.button("Reset Simulation", key="reset_sim_button"):
                     if st.session_state.simulator:
                         st.session_state.simulator.send_command({'type': 'reset'})
                         st.success("Simulation reset with a single node.")
@@ -303,7 +309,8 @@ def _display_simulation_interface():
                 max_value=5.0, 
                 value=st.session_state.simulation_speed,
                 step=0.1,
-                help="Controls how fast the simulation runs."
+                help="Controls how fast the simulation runs.",
+                key="sim_speed_slider_main"
             )
             if simulation_speed != st.session_state.simulation_speed:
                 st.session_state.simulation_speed = simulation_speed
@@ -316,7 +323,8 @@ def _display_simulation_interface():
             auto_generate = st.checkbox(
                 "Auto-generate Nodes", 
                 value=st.session_state.auto_generate_nodes,
-                help="Automatically add new nodes over time."
+                help="Automatically add new nodes over time.",
+                key="auto_gen_checkbox_main"
             )
             if auto_generate != st.session_state.auto_generate_nodes:
                 st.session_state.auto_generate_nodes = auto_generate
@@ -339,7 +347,8 @@ def _display_simulation_interface():
                         max_value=10.0, 
                         value=2.0,
                         step=0.5,
-                        help="Minimum time between node generation."
+                        help="Minimum time between node generation.",
+                        key="min_interval_input"
                     )
                 
                 with col2b:
@@ -350,7 +359,8 @@ def _display_simulation_interface():
                         max_value=20.0, 
                         value=10.0,
                         step=0.5,
-                        help="Maximum time between node generation."
+                        help="Maximum time between node generation.",
+                        key="max_interval_input"
                     )
                 
                 if min_interval > max_interval:
@@ -366,7 +376,8 @@ def _display_simulation_interface():
                     max_value=500, 
                     value=st.session_state.max_nodes,
                     step=10,
-                    help="Maximum number of nodes in the simulation."
+                    help="Maximum number of nodes in the simulation.",
+                    key="max_nodes_slider_main"
                 )
                 if max_nodes != st.session_state.max_nodes:
                     st.session_state.max_nodes = max_nodes
@@ -387,7 +398,8 @@ def _display_simulation_interface():
                 options=["3d", "2d"],
                 index=0 if st.session_state.viz_mode == "3d" else 1,
                 horizontal=True,
-                help="Choose between 2D and 3D visualization."
+                help="Choose between 2D and 3D visualization.",
+                key="viz_mode_radio_main"
             )
             if viz_mode != st.session_state.viz_mode:
                 st.session_state.viz_mode = viz_mode
@@ -399,7 +411,8 @@ def _display_simulation_interface():
             auto_refresh = st.checkbox(
                 "Auto-refresh Visualization", 
                 value=st.session_state.auto_refresh,
-                help="Automatically refresh the visualization."
+                help="Automatically refresh the visualization.",
+                key="auto_refresh_checkbox_main"
             )
             if auto_refresh != st.session_state.auto_refresh:
                 st.session_state.auto_refresh = auto_refresh
@@ -412,7 +425,8 @@ def _display_simulation_interface():
                     max_value=5.0, 
                     value=float(st.session_state.refresh_interval),
                     step=0.1,
-                    help="Time between visualization refreshes."
+                    help="Time between visualization refreshes.",
+                    key="refresh_interval_slider_main"
                 )
                 if refresh_interval != st.session_state.refresh_interval:
                     st.session_state.refresh_interval = float(refresh_interval)
@@ -426,7 +440,8 @@ def _display_simulation_interface():
             show_particles = st.checkbox(
                 "Show Firing Particles", 
                 value=True,
-                help="Show particles when nodes fire."
+                help="Show particles when nodes fire.",
+                key="show_particles_checkbox"
             )
             
             # Particle size
@@ -436,7 +451,8 @@ def _display_simulation_interface():
                 max_value=2.0, 
                 value=1.0,
                 step=0.1,
-                help="Size of firing particles."
+                help="Size of firing particles.",
+                key="particle_size_slider"
             )
         
         with col6:
@@ -445,7 +461,8 @@ def _display_simulation_interface():
                 "Firing Color Preset",
                 options=["Default", "Rainbow", "Fire", "Electric", "Cool"],
                 index=0,
-                help="Choose a color preset for firing effects."
+                help="Choose a color preset for firing effects.",
+                key="firing_color_preset_select"
             )
             
             # Firing animation duration
@@ -455,7 +472,8 @@ def _display_simulation_interface():
                 max_value=30, 
                 value=10,
                 step=1,
-                help="Duration of firing animation in frames."
+                help="Duration of firing animation in frames.",
+                key="animation_duration_slider"
             )
         
         # Apply firing visualization settings
@@ -481,6 +499,9 @@ def _display_simulation_interface():
         # Display the visualization
         st.subheader("Neural Network Visualization")
         
+        # Create a placeholder for the visualization with a unique key
+        viz_placeholder = st.empty()
+        
         # Get the current time for a unique key
         current_time = time.time()
         
@@ -490,9 +511,9 @@ def _display_simulation_interface():
             fig = st.session_state.simulator.renderer.get_latest_visualization()
             if fig:
                 # Display with a unique key to prevent conflicts
-                st.plotly_chart(fig, use_container_width=True, key=f"{viz_mode}_viz_{int(current_time)}")
+                viz_placeholder.plotly_chart(fig, use_container_width=True, key=f"{st.session_state.viz_mode}_viz_{int(current_time)}")
             else:
-                st.info("Visualization not available yet. Please wait...")
+                viz_placeholder.info("Visualization not available yet. Please wait...")
         
         # Display simulation statistics
         if st.session_state.simulator and st.session_state.simulator.network:
@@ -520,9 +541,18 @@ def _display_simulation_interface():
         
         # Auto-refresh mechanism
         if auto_refresh:
-            time.sleep(0.1)  # Small delay to prevent excessive refreshes
-            if time.time() - st.session_state.last_render_time > st.session_state.refresh_interval:
-                st.session_state.last_render_time = time.time()
+            # Store the current time in session state for comparison
+            if 'last_refresh_time' not in st.session_state:
+                st.session_state.last_refresh_time = time.time()
+            
+            # Check if enough time has passed since the last refresh
+            current_time = time.time()
+            if current_time - st.session_state.last_refresh_time > st.session_state.refresh_interval:
+                # Update the last refresh time
+                st.session_state.last_refresh_time = current_time
+                
+                # Force a rerun of the app
+                time.sleep(0.1)  # Small delay to prevent excessive refreshes
                 st.rerun()
     
     except Exception as e:
@@ -894,68 +924,93 @@ def _display_settings_interface():
         with settings_tabs[0]:  # Simulation Settings
             st.subheader("Simulation Settings")
             
-            # Simulation parameters
-            st.slider("Simulation Speed", 0.1, 10.0, st.session_state.simulation_speed, 0.1, key="settings_speed")
-            st.slider("Learning Rate", 0.01, 1.0, st.session_state.learning_rate, 0.01, key="settings_learning_rate")
-            st.slider("Energy Decay Rate", 0.01, 0.5, st.session_state.energy_decay_rate, 0.01, key="settings_decay_rate")
-            st.slider("Connection Threshold", 0.1, 5.0, st.session_state.connection_threshold, 0.1, key="settings_connection_threshold")
-            
-            # Node generation settings
-            st.subheader("Node Generation")
-            st.checkbox("Auto-generate Nodes", value=st.session_state.auto_generate_nodes, key="settings_auto_generate")
-            st.slider("Generation Rate", 0.01, 0.5, st.session_state.node_generation_rate, 0.01, key="settings_generation_rate")
-            st.slider("Maximum Nodes", 10, 500, st.session_state.max_nodes, 10, key="settings_max_nodes")
-            
-            # Apply button
-            if st.button("Apply Simulation Settings"):
-                # Update session state
-                st.session_state.simulation_speed = st.session_state.settings_speed
-                st.session_state.learning_rate = st.session_state.settings_learning_rate
-                st.session_state.energy_decay_rate = st.session_state.settings_decay_rate
-                st.session_state.connection_threshold = st.session_state.settings_connection_threshold
-                st.session_state.auto_generate_nodes = st.session_state.settings_auto_generate
-                st.session_state.node_generation_rate = st.session_state.settings_generation_rate
-                st.session_state.max_nodes = st.session_state.settings_max_nodes
-                
-                # Apply to simulator if it exists
+            # Simulation speed
+            simulation_speed = st.slider(
+                "Simulation Speed", 
+                min_value=0.1, 
+                max_value=5.0, 
+                value=st.session_state.simulation_speed,
+                step=0.1,
+                help="Controls how fast the simulation runs.",
+                key="settings_sim_speed_slider"
+            )
+            if simulation_speed != st.session_state.simulation_speed:
+                st.session_state.simulation_speed = simulation_speed
                 if st.session_state.simulator:
-                    st.session_state.simulator.send_command({
-                        "action": "set_parameters",
-                        "speed": st.session_state.simulation_speed,
-                        "learning_rate": st.session_state.learning_rate,
-                        "decay_rate": st.session_state.energy_decay_rate,
-                        "connection_threshold": st.session_state.connection_threshold,
-                        "auto_generate": st.session_state.auto_generate_nodes,
-                        "node_generation_rate": st.session_state.node_generation_rate,
-                        "max_nodes": st.session_state.max_nodes
-                    })
-                    
-                    st.success("Settings applied")
-                else:
-                    st.warning("Simulator not initialized. Settings will be applied when the simulation starts.")
+                    st.session_state.simulator.steps_per_second = simulation_speed
+            
+            # Auto-generate nodes
+            auto_generate = st.checkbox(
+                "Auto-generate Nodes", 
+                value=st.session_state.auto_generate_nodes,
+                help="Automatically add new nodes over time.",
+                key="settings_auto_gen_checkbox"
+            )
+            if auto_generate != st.session_state.auto_generate_nodes:
+                st.session_state.auto_generate_nodes = auto_generate
+                if st.session_state.simulator:
+                    st.session_state.simulator.auto_generate_nodes = auto_generate
+            
+            # Maximum nodes
+            max_nodes = st.slider(
+                "Maximum Nodes", 
+                min_value=10, 
+                max_value=500, 
+                value=st.session_state.max_nodes,
+                step=10,
+                help="Maximum number of nodes in the simulation.",
+                key="settings_max_nodes_slider"
+            )
+            if max_nodes != st.session_state.max_nodes:
+                st.session_state.max_nodes = max_nodes
+                if st.session_state.simulator:
+                    st.session_state.simulator.max_nodes = max_nodes
+            
+            # Warning if simulator is not initialized
+            if not st.session_state.simulator:
+                st.warning("Simulator not initialized. Settings will be applied when the simulation starts.")
         
         with settings_tabs[1]:  # Visualization Settings
             st.subheader("Visualization Settings")
             
             # Visualization mode
-            viz_mode = st.radio("Default Visualization Mode", ['3d', '2d'], 
-                              index=0 if st.session_state.viz_mode == "3d" else 1)
+            viz_mode = st.radio(
+                "Default Visualization Mode",
+                options=["3d", "2d"],
+                index=0 if st.session_state.viz_mode == "3d" else 1,
+                help="Choose between 2D and 3D visualization.",
+                key="settings_viz_mode_radio"
+            )
             if viz_mode != st.session_state.viz_mode:
                 st.session_state.viz_mode = viz_mode
+                if st.session_state.simulator:
+                    st.session_state.simulator.cached_viz_mode = viz_mode
             
             # Auto-refresh
-            auto_refresh = st.checkbox("Auto-refresh", value=st.session_state.auto_refresh)
+            auto_refresh = st.checkbox(
+                "Auto-refresh Visualization", 
+                value=st.session_state.auto_refresh,
+                help="Automatically refresh the visualization.",
+                key="settings_auto_refresh_checkbox"
+            )
             if auto_refresh != st.session_state.auto_refresh:
                 st.session_state.auto_refresh = auto_refresh
             
             # Refresh interval (only show if auto-refresh is enabled)
             if auto_refresh:
+                # Ensure refresh_interval is a float, not a list
+                current_refresh_interval = st.session_state.refresh_interval
+                if isinstance(current_refresh_interval, list):
+                    current_refresh_interval = float(current_refresh_interval[0]) if current_refresh_interval else 0.5
+                
                 refresh_interval = st.slider(
                     "Refresh Interval (seconds)", 
                     min_value=0.1, 
                     max_value=5.0, 
-                    value=float(st.session_state.refresh_interval),
-                    step=0.1
+                    value=float(current_refresh_interval),
+                    step=0.1,
+                    help="Time between visualization refreshes.",
+                    key="settings_refresh_interval_slider"
                 )
                 if refresh_interval != st.session_state.refresh_interval:
                     st.session_state.refresh_interval = float(refresh_interval)
@@ -963,30 +1018,124 @@ def _display_settings_interface():
         with settings_tabs[2]:  # Performance Settings
             st.subheader("Performance Settings")
             
-            # Performance options
-            st.checkbox("Enable GPU Acceleration (if available)", value=False, key="settings_gpu")
-            st.slider("Maximum Threads", 1, 16, 4, 1, key="settings_threads")
+            # Rendering settings
+            st.markdown("#### Rendering Settings")
             
-            # Apply button
-            if st.button("Apply Performance Settings"):
-                st.warning("Performance settings not implemented yet")
+            # Render frequency
+            render_frequency = st.slider(
+                "Render Frequency", 
+                min_value=1, 
+                max_value=20, 
+                value=st.session_state.get('render_frequency', 5),
+                step=1,
+                help="How many simulation steps to process before updating the visualization",
+                key="render_frequency_slider"
+            )
+            st.session_state.render_frequency = render_frequency
+            if st.session_state.simulator:
+                st.session_state.simulator.render_frequency = render_frequency
+            
+            # Buffered rendering
+            buffered_rendering = st.checkbox(
+                "Use Buffered Rendering", 
+                value=st.session_state.get('buffered_rendering', True),
+                help="Smooth out visualization updates by buffering frames",
+                key="buffered_rendering_checkbox"
+            )
+            st.session_state.buffered_rendering = buffered_rendering
+            
+            # Animation settings
+            st.markdown("#### Animation Settings")
+            
+            # Animation enabled
+            animation_enabled = st.checkbox(
+                "Enable Animations", 
+                value=st.session_state.get('animation_enabled', True),
+                help="Enable firing animations and visual effects",
+                key="animation_enabled_checkbox"
+            )
+            st.session_state.animation_enabled = animation_enabled
+            
+            # Show tendrils
+            show_tendrils = st.checkbox(
+                "Show Connection Tendrils", 
+                value=st.session_state.get('show_tendrils', True),
+                help="Show visual connections between nodes when firing",
+                key="show_tendrils_checkbox"
+            )
+            st.session_state.show_tendrils = show_tendrils
+            
+            # Tendril persistence
+            tendril_persistence = st.slider(
+                "Tendril Persistence", 
+                min_value=5, 
+                max_value=50, 
+                value=st.session_state.get('tendril_persistence', 20),
+                step=5,
+                help="How long connection tendrils remain visible",
+                key="tendril_persistence_slider"
+            )
+            st.session_state.tendril_persistence = tendril_persistence
         
         with settings_tabs[3]:  # Advanced Settings
             st.subheader("Advanced Settings")
             
-            # Advanced options
-            st.checkbox("Debug Mode", value=False, key="settings_debug")
-            st.checkbox("Auto-checkpoint", value=True, key="settings_auto_checkpoint")
-            st.slider("Checkpoint Interval (minutes)", 1, 30, 5, 1, key="settings_checkpoint_interval")
+            # Learning rate
+            learning_rate = st.slider(
+                "Learning Rate", 
+                min_value=0.01, 
+                max_value=1.0, 
+                value=st.session_state.get('learning_rate', 0.1),
+                step=0.01,
+                help="Rate at which connections strengthen with repeated activations",
+                key="learning_rate_slider"
+            )
+            st.session_state.learning_rate = learning_rate
+            if st.session_state.simulator and st.session_state.simulator.network:
+                st.session_state.simulator.network.learning_rate = learning_rate
             
-            # Apply button
-            if st.button("Apply Advanced Settings"):
-                st.session_state.auto_checkpoint = st.session_state.settings_auto_checkpoint
-                st.success("Advanced settings applied")
+            # Energy decay rate
+            energy_decay_rate = st.slider(
+                "Energy Decay Rate", 
+                min_value=0.01, 
+                max_value=0.5, 
+                value=st.session_state.get('energy_decay_rate', 0.05),
+                step=0.01,
+                help="Rate at which node activation decays over time",
+                key="energy_decay_rate_slider"
+            )
+            st.session_state.energy_decay_rate = energy_decay_rate
+            
+            # Connection threshold
+            connection_threshold = st.slider(
+                "Connection Threshold", 
+                min_value=0.1, 
+                max_value=5.0, 
+                value=st.session_state.get('connection_threshold', 0.5),
+                step=0.1,
+                help="Threshold for forming new connections between nodes",
+                key="connection_threshold_slider"
+            )
+            st.session_state.connection_threshold = connection_threshold
+            
+            # Reset to defaults button
+            if st.button("Reset to Defaults", key="reset_defaults_button"):
+                st.session_state.simulation_speed = 1.0
+                st.session_state.learning_rate = 0.1
+                st.session_state.energy_decay_rate = 0.05
+                st.session_state.connection_threshold = 0.5
+                st.session_state.render_frequency = 5
+                st.session_state.buffered_rendering = True
+                st.session_state.animation_enabled = True
+                st.session_state.show_tendrils = True
+                st.session_state.tendril_persistence = 20
+                st.success("Settings reset to defaults")
                 
-                # Setup auto-checkpointing if enabled and simulator exists
-                if st.session_state.auto_checkpoint and st.session_state.simulator and setup_auto_checkpointing:
-                    setup_auto_checkpointing(st.session_state.simulator, interval_minutes=st.session_state.settings_checkpoint_interval)
+                # Apply to simulator if it exists
+                if st.session_state.simulator:
+                    st.session_state.simulator.steps_per_second = 1.0
+                    if st.session_state.simulator.network:
+                        st.session_state.simulator.network.learning_rate = 0.1
     
     except Exception as e:
         st.error(f"Error displaying settings interface: {str(e)}")
