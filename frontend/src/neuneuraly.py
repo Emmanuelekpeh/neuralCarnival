@@ -67,6 +67,7 @@ class Node:
     def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
         """Initialize a node with the given ID."""
         if not node_type:
+            # Random node type with weighted probability
             weights = [0.1] * 11  
             node_type = random.choices(list(NODE_TYPES.keys()), weights=weights)[0]
         
@@ -90,21 +91,17 @@ class Node:
         self.connection_attempts = 0
         self.successful_connections = 0
         
-        # Animation and firing state
+        # Animation and firing attributes
         self.is_firing = False
         self.firing_animation_step = 0
+        self.firing_animation_duration = 10
         self.firing_particles = []
         self.signal_tendrils = []
-        self.firing_animation_duration = 10
-        self.firing_history = []
-        self.activation = 0.0
-        
-        # 3D position and movement variables - ensure they're lists
-        self.position = [random.uniform(-10, 10) for _ in range(3)]
-        self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
-        
-        # Initialize animation properties
         self.firing_color = self.properties['color']
+        
+        # 3D position and movement variables
+        self.position = [random.uniform(-10, 10) for _ in range(3)]  # Ensure it's a list
+        self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
         
         # Get type-specific properties
         type_props = NODE_TYPES.get(self.type, NODE_TYPES['explorer'])
@@ -178,22 +175,17 @@ class Node:
     
     def update_position(self, network):
         """Update the 3D position of the node based on connections and natural movement."""
-        # Convert position to list if it's a tuple
-        if isinstance(self.position, tuple):
+        # Ensure position is a list
+        if not isinstance(self.position, list):
             self.position = list(self.position)
         
         for conn_id, strength in self.connections.items():
             if conn_id < len(network.nodes):
                 target = network.nodes[conn_id]
-                target_pos = target.position
-                if isinstance(target_pos, tuple):
-                    target_pos = list(target_pos)
-                
                 for i in range(3):
-                    force = (target_pos[i] - self.position[i]) * strength * 0.01
+                    force = (target.position[i] - self.position[i]) * strength * 0.01
                     self.velocity[i] += force
         
-        # Update position based on velocity
         for i in range(3):
             self.velocity[i] += random.uniform(-0.01, 0.01)
             self.velocity[i] *= 0.95
@@ -207,8 +199,8 @@ class Node:
         return self.position
     
     def set_position(self, pos):
-        """Set the position, ensuring it's a list."""
-        self.position = list(pos)
+        """Set position, ensuring it's a list."""
+        self.position = list(pos)  # Convert to list if it's a tuple
     
     def fire(self, network):
         """Fire the node, sending signals to connected nodes."""

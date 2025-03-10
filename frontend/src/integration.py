@@ -178,7 +178,7 @@ def _initialize_session_state():
             st.session_state.auto_refresh = True
         
         if 'refresh_interval' not in st.session_state:
-            st.session_state.refresh_interval = 0.5  # Initialize as float
+            st.session_state.refresh_interval = 0.5
         
         # Video recording
         if 'video_recorder' not in st.session_state:

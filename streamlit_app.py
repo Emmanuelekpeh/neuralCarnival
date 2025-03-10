@@ -61,6 +61,7 @@ if not st.session_state.initialized:
     st.session_state.viz_error_count = 0
     st.session_state.cached_viz_mode = '3d'
     st.session_state.cached_simulation_speed = 1.0
+    st.session_state.last_render_time = time.time()
     st.session_state.initialized = True
 
 # Display app title
@@ -70,10 +71,14 @@ st.markdown("A neural network visualization and simulation application.")
 # Import UI components
 logger.info("Attempting to import UI components")
 try:
-    from frontend.src.integration import create_enhanced_ui
-    create_enhanced_ui()
+    from frontend.src.integration import display_app
+    
+    # Display the main application
+    display_app()
+    
 except Exception as e:
-    logger.error(f"Error importing or running UI components: {str(e)}")
+    logger.error("Error importing or running UI components")
+    logger.error(str(e))
     logger.error(traceback.format_exc())
     st.error(f"Error initializing application: {str(e)}")
     st.info("Please check the logs for more details.")
