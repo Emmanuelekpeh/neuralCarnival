@@ -66,19 +66,42 @@ class Node:
     
     def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
         """Initialize a node with the given ID."""
+        if not node_type:
+            weights = [0.1] * 11  
+            node_type = random.choices(list(NODE_TYPES.keys()), weights=weights)[0]
+        
         self.id = node_id
-        self.connections = {}  # Dictionary of node_id -> connection_strength
+        self.type = node_type
+        self.properties = NODE_TYPES[node_type]
+        self.connections = {}
+        
+        # Initialize properties based on node type
+        min_size, max_size = self.properties['size_range']
+        self.size = random.uniform(min_size, max_size)
+        
+        min_rate, max_rate = self.properties['firing_rate']
+        self.firing_rate = random.uniform(min_rate, max_rate)
+        
         self.visible = visible
+        self.memory = 0
+        self.age = 0
+        self.last_fired = 0
         self.max_connections = max_connections
-        self.activation = 0.0
-        self.last_activation_time = 0
-        self.size = random.uniform(0.5, 1.5)
-        self.node_type = node_type if node_type else random.choice(list(NODE_TYPES.keys()))
-        self.signal_tendrils = []  # Visual traces of signals
-        self.firing_history = deque(maxlen=100)  # Store recent firing activity
+        self.connection_attempts = 0
+        self.successful_connections = 0
+        
+        # 3D position and movement variables - ensure they're lists
+        self.position = [random.uniform(-10, 10) for _ in range(3)]
+        self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
+        
+        # Initialize animation properties
+        self.firing_particles = []
+        self.signal_tendrils = []
+        self.firing_animation_duration = 10
+        self.firing_color = self.properties['color']
         
         # Get type-specific properties
-        type_props = NODE_TYPES.get(self.node_type, NODE_TYPES['explorer'])
+        type_props = NODE_TYPES.get(self.type, NODE_TYPES['explorer'])
         
         # Visual properties
         self.color = type_props.get('color', '#FF5733')
@@ -94,22 +117,6 @@ class Node:
         self.firing_threshold = random.uniform(0.5, 0.8)
         self.firing_rate = random.uniform(*self.firing_rate_range)
         self.decay_rate = random.uniform(*self.decay_rate_range)
-        
-        # Position and movement - ensure these are lists, not tuples
-        self.position = [
-            random.uniform(-5.0, 5.0),
-            random.uniform(-5.0, 5.0),
-            random.uniform(-5.0, 5.0)
-        ]
-        self.velocity = [0.0, 0.0, 0.0]
-        
-        # Firing visualization properties
-        self.is_firing = False
-        self.firing_animation_step = 0
-        self.firing_animation_duration = 10  # Number of steps for firing animation
-        self.firing_color = type_props.get('firing_color', '#FFFF00')  # Yellow by default
-        self.firing_size_multiplier = 1.5  # How much larger the node gets when firing
-        self.firing_particles = []  # Particles emitted when firing
         
         # Neuromodulators (for more complex behaviors)
         self.dopamine = 0.0  # Reward/reinforcement
@@ -164,57 +171,38 @@ class Node:
         return False
     
     def update_position(self, network):
-        """Update the node's position based on its velocity and connections."""
-        # Apply velocity to position
-        for i in range(len(self.position)):
-            self.position[i] += self.velocity[i]
+        """Update the 3D position of the node based on connections and natural movement."""
+        # Convert position to list if it's a tuple
+        if isinstance(self.position, tuple):
+            self.position = list(self.position)
         
-        # Apply forces from connections
-        for target_id, strength in self.connections.items():
-            # Find target node
-            target_node = None
-            for node in network.nodes:
-                if node.id == target_id:
-                    target_node = node
-                    break
-            
-            if target_node and target_node.visible:
-                # Calculate direction vector
-                direction = [0, 0, 0]
-                for i in range(3):
-                    # Make sure target position is also a list
-                    if isinstance(target_node.position, tuple):
-                        target_node.position = list(target_node.position)
-                    direction[i] = target_node.position[i] - self.position[i]
+        for conn_id, strength in self.connections.items():
+            if conn_id < len(network.nodes):
+                target = network.nodes[conn_id]
+                target_pos = target.position
+                if isinstance(target_pos, tuple):
+                    target_pos = list(target_pos)
                 
-                # Normalize direction
-                distance = max(0.1, math.sqrt(sum(d*d for d in direction)))
                 for i in range(3):
-                    direction[i] /= distance
-                
-                # Apply force based on connection strength
-                force = 0.01 * strength
-                for i in range(3):
-                    self.velocity[i] += direction[i] * force
+                    force = (target_pos[i] - self.position[i]) * strength * 0.01
+                    self.velocity[i] += force
         
-        # Apply damping to velocity
-        damping = 0.95
-        for i in range(3):
-            self.velocity[i] *= damping
-        
-        # Add a small random movement
+        # Update position based on velocity
         for i in range(3):
             self.velocity[i] += random.uniform(-0.01, 0.01)
-        
-        # Ensure position stays within bounds
-        bounds = 10.0
-        for i in range(3):
-            if self.position[i] < -bounds:
-                self.position[i] = -bounds
-                self.velocity[i] *= -0.5  # Bounce
-            elif self.position[i] > bounds:
-                self.position[i] = bounds
-                self.velocity[i] *= -0.5  # Bounce
+            self.velocity[i] *= 0.95
+            self.position[i] += self.velocity[i]
+            self.position[i] = max(-15, min(15, self.position[i]))
+    
+    def get_position(self):
+        """Get the current position as a list."""
+        if isinstance(self.position, tuple):
+            return list(self.position)
+        return self.position
+    
+    def set_position(self, pos):
+        """Set the position, ensuring it's a list."""
+        self.position = list(pos)
     
     def fire(self, network):
         """Fire the node, sending signals to connected nodes."""
@@ -352,10 +340,10 @@ class Node:
             progress = self.firing_animation_step / self.firing_animation_duration
             if progress < 0.5:
                 # Increase size
-                size_multiplier = 1.0 + (self.firing_size_multiplier - 1.0) * (progress * 2)
+                size_multiplier = 1.0 + (1.5 - 1.0) * (progress * 2)
             else:
                 # Decrease size
-                size_multiplier = self.firing_size_multiplier - (self.firing_size_multiplier - 1.0) * ((progress - 0.5) * 2)
+                size_multiplier = 1.5 - (1.5 - 1.0) * ((progress - 0.5) * 2)
             return base_size * size_multiplier
         return base_size
     
@@ -517,7 +505,7 @@ class NeuralNetwork:
         visible_nodes = [n for n in self.nodes if n.visible]
         type_counts = {t: 0 for t in NODE_TYPES}
         for node in visible_nodes:
-            type_counts[node.node_type] += 1
+            type_counts[node.type] += 1
         
         # Record stats
         self.stats['node_count'].append(len(self.nodes))
@@ -543,14 +531,14 @@ class BackgroundRenderer:
         self.simulator = simulator
         self.running = False
         self.render_thread = None
-        self.last_render = None
         self.render_queue = queue.Queue()
-        self.render_mode = '3d'  # Default mode
-        self.position_history = {}  # Store position history for each node
-        self.smoothed_positions = {}  # Store smoothed positions for visualization
-        self.max_history_length = 10  # Number of positions to keep in history
-        self.history_weight = 0.7  # Weight for exponential smoothing
-        
+        self.last_render = None
+        self.render_mode = '3d'
+        self.position_history = {}
+        self.smoothed_positions = {}
+        self.max_history_length = 5
+        self.history_weight = 0.7
+    
     def start(self):
         """Start the rendering thread."""
         if not self.running:
@@ -566,9 +554,9 @@ class BackgroundRenderer:
             self.render_thread.join(timeout=0.5)
     
     def request_render(self, mode='3d'):
-        """Request a new visualization to be rendered."""
+        """Request a new render with the given mode."""
         self.render_mode = mode
-        self.render_queue.put(True)
+        self.render_queue.put(mode)
     
     def get_latest_visualization(self):
         """Get the most recent visualization."""
@@ -578,144 +566,116 @@ class BackgroundRenderer:
         """Main rendering loop that runs in a background thread."""
         while self.running:
             try:
-                # Wait for render request with timeout
+                # Get the next render request, waiting up to 0.1 seconds
                 try:
-                    self.render_queue.get(timeout=0.1)
+                    mode = self.render_queue.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 
                 # Create visualization based on mode
-                if self.render_mode == '3d':
-                    self.last_render = self._create_3d_visualization()
+                if mode == '3d':
+                    fig = self._create_3d_visualization()
                 else:
-                    self.last_render = self._create_2d_visualization()
+                    fig = self._create_2d_visualization()
                 
-                # Mark task as done
-                self.render_queue.task_done()
+                # Store the result
+                self.last_render = fig
                 
+                # Small delay to prevent excessive CPU usage
+                time.sleep(0.01)
+            
             except Exception as e:
                 print(f"Error in render loop: {str(e)}")
-                time.sleep(0.1)  # Avoid tight loop on error
-                
-            # Small delay to prevent excessive CPU usage
-            time.sleep(0.01)
+                time.sleep(0.1)  # Avoid tight loop on errors
     
     def _create_3d_visualization(self):
         """Create a 3D visualization of the network."""
-        # Create a 3D scatter plot
-        fig = go.Figure()
+        try:
+            network = self.simulator.network
+            if not network or not network.nodes:
+                return None
+            
+            # Update position history for smooth transitions
+            current_positions = {}
+            for node in network.nodes:
+                if node.visible:
+                    current_positions[node.id] = node.get_position()
+            
+            # Update history
+            self.position_history[len(self.position_history)] = current_positions
+            if len(self.position_history) > self.max_history_length:
+                self.position_history.pop(0)
+            
+            # Calculate smoothed positions
+            self.smoothed_positions = {}
+            for node_id in current_positions:
+                positions = []
+                weights = []
+                for t, pos_dict in self.position_history.items():
+                    if node_id in pos_dict:
+                        positions.append(pos_dict[node_id])
+                        weights.append(self.history_weight ** (len(self.position_history) - t - 1))
+                
+                if positions:
+                    # Calculate weighted average
+                    total_weight = sum(weights)
+                    smoothed_pos = [0, 0, 0]
+                    for pos, weight in zip(positions, weights):
+                        for i in range(3):
+                            smoothed_pos[i] += pos[i] * weight / total_weight
+                    self.smoothed_positions[node_id] = smoothed_pos
+            
+            # Create the visualization using smoothed positions
+            return network.visualize(mode='3d')
         
-        # Add nodes
-        node_x, node_y, node_z = [], [], []
-        node_colors, node_sizes = [], []
-        
-        for node in self.simulator.network.nodes:
-            if node.visible:
-                # Use smoothed position if available
-                pos = self.smoothed_positions.get(node.id, node.position)
-                node_x.append(pos[0])
-                node_y.append(pos[1])
-                node_z.append(pos[2])
-                node_colors.append(node.get_display_color())
-                node_sizes.append(node.get_display_size() * 10)
-        
-        # Add nodes to the plot
-        fig.add_trace(go.Scatter3d(
-            x=node_x, y=node_y, z=node_z,
-            mode='markers',
-            marker=dict(
-                size=node_sizes,
-                color=node_colors,
-                opacity=0.8
-            ),
-            hoverinfo='none'
-        ))
-        
-        # Add connections
-        for node in self.simulator.network.nodes:
-            if node.visible:
-                start_pos = self.smoothed_positions.get(node.id, node.position)
-                for target_id in node.connections:
-                    target_node = next((n for n in self.simulator.network.nodes if n.id == target_id), None)
-                    if target_node and target_node.visible:
-                        end_pos = self.smoothed_positions.get(target_id, target_node.position)
-                        fig.add_trace(go.Scatter3d(
-                            x=[start_pos[0], end_pos[0]],
-                            y=[start_pos[1], end_pos[1]],
-                            z=[start_pos[2], end_pos[2]],
-                            mode='lines',
-                            line=dict(color='rgba(100,100,100,0.2)', width=1),
-                            hoverinfo='none'
-                        ))
-        
-        # Update layout
-        fig.update_layout(
-            showlegend=False,
-            scene=dict(
-                xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                zaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-            ),
-            margin=dict(l=0, r=0, t=0, b=0)
-        )
-        
-        return fig
+        except Exception as e:
+            print(f"Error creating 3D visualization: {str(e)}")
+            return None
     
     def _create_2d_visualization(self):
         """Create a 2D visualization of the network."""
-        # Create a 2D scatter plot
-        fig = go.Figure()
+        try:
+            network = self.simulator.network
+            if not network or not network.nodes:
+                return None
+            
+            # Update position history for smooth transitions (only x and y)
+            current_positions = {}
+            for node in network.nodes:
+                if node.visible:
+                    pos = node.get_position()
+                    current_positions[node.id] = [pos[0], pos[1]]
+            
+            # Update history
+            self.position_history[len(self.position_history)] = current_positions
+            if len(self.position_history) > self.max_history_length:
+                self.position_history.pop(0)
+            
+            # Calculate smoothed positions
+            self.smoothed_positions = {}
+            for node_id in current_positions:
+                positions = []
+                weights = []
+                for t, pos_dict in self.position_history.items():
+                    if node_id in pos_dict:
+                        positions.append(pos_dict[node_id])
+                        weights.append(self.history_weight ** (len(self.position_history) - t - 1))
+                
+                if positions:
+                    # Calculate weighted average
+                    total_weight = sum(weights)
+                    smoothed_pos = [0, 0]
+                    for pos, weight in zip(positions, weights):
+                        for i in range(2):
+                            smoothed_pos[i] += pos[i] * weight / total_weight
+                    self.smoothed_positions[node_id] = smoothed_pos
+            
+            # Create the visualization using smoothed positions
+            return network.visualize(mode='2d')
         
-        # Add nodes
-        node_x, node_y = [], []
-        node_colors, node_sizes = [], []
-        
-        for node in self.simulator.network.nodes:
-            if node.visible:
-                # Use smoothed position if available, but only x and y coordinates
-                pos = self.smoothed_positions.get(node.id, node.position)
-                node_x.append(pos[0])
-                node_y.append(pos[1])
-                node_colors.append(node.get_display_color())
-                node_sizes.append(node.get_display_size() * 10)
-        
-        # Add nodes to the plot
-        fig.add_trace(go.Scatter(
-            x=node_x, y=node_y,
-            mode='markers',
-            marker=dict(
-                size=node_sizes,
-                color=node_colors,
-                opacity=0.8
-            ),
-            hoverinfo='none'
-        ))
-        
-        # Add connections
-        for node in self.simulator.network.nodes:
-            if node.visible:
-                start_pos = self.smoothed_positions.get(node.id, node.position)
-                for target_id in node.connections:
-                    target_node = next((n for n in self.simulator.network.nodes if n.id == target_id), None)
-                    if target_node and target_node.visible:
-                        end_pos = self.smoothed_positions.get(target_id, target_node.position)
-                        fig.add_trace(go.Scatter(
-                            x=[start_pos[0], end_pos[0]],
-                            y=[start_pos[1], end_pos[1]],
-                            mode='lines',
-                            line=dict(color='rgba(100,100,100,0.2)', width=1),
-                            hoverinfo='none'
-                        ))
-        
-        # Update layout
-        fig.update_layout(
-            showlegend=False,
-            xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-            yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-            margin=dict(l=0, r=0, t=0, b=0)
-        )
-        
-        return fig
+        except Exception as e:
+            print(f"Error creating 2D visualization: {str(e)}")
+            return None
 
 class NetworkSimulator:
     """Manages the simulation of a neural network."""

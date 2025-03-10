@@ -1,5 +1,5 @@
 [theme]
-primaryColor = "#FF5733"
+primaryColor = "#FF4B4B"
 backgroundColor = "#0E1117"
 secondaryBackgroundColor = "#262730"
 textColor = "#FAFAFA"
@@ -7,8 +7,8 @@ font = "sans serif"
 
 [server]
 maxUploadSize = 200
+enableXsrfProtection = false
 enableCORS = true
-enableXsrfProtection = true
 
 [browser]
 gatherUsageStats = false
@@ -17,4 +17,11 @@ gatherUsageStats = false
 magicEnabled = true
 
 [logger]
-level = "info" 
+level = "info"
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[global]
+developmentMode = false 

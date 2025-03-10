@@ -1,51 +1,41 @@
-# Neural Carnival - Streamlit Deployment Guide
+# Deploying Neural Carnival to Streamlit Cloud
 
-This document provides instructions for deploying Neural Carnival on Streamlit Cloud.
+## Quick Deploy
+1. Fork this repository to your GitHub account
+2. Visit [share.streamlit.io](https://share.streamlit.io)
+3. Sign in with GitHub
+4. Click "New app"
+5. Select this repository and branch
+6. Set main file path to: `streamlit_app.py`
+7. Click "Deploy!"
 
-## Deployment Steps
-
-1. **Fork the Repository**
-   
-   Fork this repository to your GitHub account.
-
-2. **Sign in to Streamlit Cloud**
-   
-   Go to [Streamlit Cloud](https://streamlit.io/cloud) and sign in with your GitHub account.
-
-3. **Deploy the App**
-   
-   - Click "New app"
-   - Select your forked repository
-   - Set the main file path to `streamlit_app.py`
-   - Set the Python version to 3.9 or higher
-   - Click "Deploy"
-
-4. **Advanced Settings (Optional)**
-   
-   - You can set environment variables if needed
-   - You can adjust the app's resources (memory, CPU)
-
-## Local Testing
-
-Before deploying to Streamlit Cloud, you can test the app locally:
-
+## Local Development
+1. Install dependencies:
 ```bash
-python run_streamlit.py
+pip install -r requirements-streamlit.txt
 ```
 
-Or directly with Streamlit:
-
+2. Run locally:
 ```bash
 streamlit run streamlit_app.py
 ```
 
+## Configuration
+- The app uses `.streamlit/config.toml` for Streamlit-specific settings
+- Adjust memory limits in Streamlit Cloud dashboard if needed
+- Environment variables can be set in Streamlit Cloud settings
+
+## Performance Tips
+1. Use `st.cache_data` for expensive computations
+2. Keep session state minimal
+3. Use background processing for heavy calculations
+4. Optimize render frequency for smooth visualization
+
 ## Troubleshooting
-
-If you encounter issues with the deployment:
-
-1. **Check the logs** in Streamlit Cloud
-2. **Verify dependencies** are correctly installed
-3. **Test locally** to ensure the app works on your machine
+- If visualization is slow, adjust refresh rate in settings
+- Clear browser cache if UI becomes unresponsive
+- Check Streamlit Cloud logs for errors
+- Use "Manage app" in Streamlit Cloud for debugging
 
 ## Notes for Streamlit Cloud
 
