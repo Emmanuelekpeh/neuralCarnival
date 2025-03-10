@@ -90,14 +90,20 @@ class Node:
         self.connection_attempts = 0
         self.successful_connections = 0
         
+        # Animation and firing state
+        self.is_firing = False
+        self.firing_animation_step = 0
+        self.firing_particles = []
+        self.signal_tendrils = []
+        self.firing_animation_duration = 10
+        self.firing_history = []
+        self.activation = 0.0
+        
         # 3D position and movement variables - ensure they're lists
         self.position = [random.uniform(-10, 10) for _ in range(3)]
         self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
         
         # Initialize animation properties
-        self.firing_particles = []
-        self.signal_tendrils = []
-        self.firing_animation_duration = 10
         self.firing_color = self.properties['color']
         
         # Get type-specific properties
@@ -749,10 +755,9 @@ class NetworkSimulator:
         last_time = time.time()
         step_interval = 1.0 / self.steps_per_second
         
-        # Cache session state values to avoid frequent access
-        cached_viz_mode = '3d'
-        cached_simulation_speed = 1.0
-        last_cache_update = time.time()
+        # Cache visualization settings
+        self.cached_viz_mode = '3d'
+        self.cached_simulation_speed = 1.0
         
         try:
             while self.running:
@@ -787,8 +792,8 @@ class NetworkSimulator:
                 
                 # Request a render if needed
                 if self.render_needed and current_time - self.last_render_time > 0.1:
-                    # Use cached values instead of accessing session state directly
-                    self.renderer.request_render(mode=cached_viz_mode)
+                    # Use cached visualization mode
+                    self.renderer.request_render(mode=self.cached_viz_mode)
                     self.last_render_time = current_time
                     self.render_needed = False
                 

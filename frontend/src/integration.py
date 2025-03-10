@@ -348,6 +348,7 @@ def _display_simulation_interface():
                 # Update the simulator's property directly if it exists
                 if st.session_state.simulator:
                     st.session_state.simulator.steps_per_second = simulation_speed
+                    st.session_state.simulator.cached_simulation_speed = simulation_speed
             
             # Auto-generate nodes
             auto_generate = st.checkbox(
@@ -358,7 +359,6 @@ def _display_simulation_interface():
             if auto_generate != st.session_state.auto_generate_nodes:
                 st.session_state.auto_generate_nodes = auto_generate
                 if st.session_state.simulator:
-                    # Update the simulator's property directly
                     st.session_state.simulator.auto_generate_nodes = auto_generate
                     st.session_state.simulator.send_command({
                         'type': 'set_auto_generate',
@@ -429,6 +429,8 @@ def _display_simulation_interface():
             )
             if viz_mode != st.session_state.viz_mode:
                 st.session_state.viz_mode = viz_mode
+                if st.session_state.simulator:
+                    st.session_state.simulator.cached_viz_mode = viz_mode
         
         with col4:
             # Auto-refresh
@@ -446,12 +448,12 @@ def _display_simulation_interface():
                     "Refresh Interval (sec)", 
                     min_value=0.1, 
                     max_value=5.0, 
-                    value=st.session_state.refresh_interval,
+                    value=float(st.session_state.refresh_interval),
                     step=0.1,
                     help="Time between visualization refreshes."
                 )
                 if refresh_interval != st.session_state.refresh_interval:
-                    st.session_state.refresh_interval = refresh_interval
+                    st.session_state.refresh_interval = float(refresh_interval)
         
         # Firing visualization options
         st.subheader("Firing Visualization")
@@ -989,12 +991,12 @@ def _display_settings_interface():
                     "Refresh Interval (seconds)", 
                     min_value=0.1, 
                     max_value=5.0, 
-                    value=float(st.session_state.refresh_interval),  # Ensure float type
+                    value=float(st.session_state.refresh_interval),
                     step=0.1,
                     key="settings_refresh_interval"
                 )
                 if refresh_interval != st.session_state.refresh_interval:
-                    st.session_state.refresh_interval = float(refresh_interval)  # Store as float
+                    st.session_state.refresh_interval = float(refresh_interval)
         
         with settings_tabs[2]:  # Performance Settings
             st.subheader("Performance Settings")
