@@ -493,6 +493,7 @@ class NeuralNetwork:
         self.start_time = time.time()
         self.learning_rate = 0.1
         self.max_nodes = max_nodes
+        self.next_node_id = 0  # Initialize the next_node_id
         self.stats = {
             'node_count': [],
             'visible_nodes': [],
@@ -518,8 +519,9 @@ class NeuralNetwork:
             if node.visible:
                 # Use the new update method that handles position updates, firing, etc.
                 node.update(self)
-                # Increment simulation step counter
-                self.simulation_steps += 1
+        
+        # Increment simulation step counter
+        self.simulation_steps += 1
 
     def record_stats(self):
         """Record current network statistics."""
