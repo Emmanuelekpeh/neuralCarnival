@@ -42,6 +42,8 @@ sys.path.append(os.path.join(current_dir, 'frontend', 'src'))
 # Initialize session state
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
+
+if not st.session_state.initialized:
     st.session_state.simulator = None
     st.session_state.active_tab = "Simulation"
     st.session_state.viz_mode = "3d"
@@ -59,6 +61,7 @@ if 'initialized' not in st.session_state:
     st.session_state.viz_error_count = 0
     st.session_state.cached_viz_mode = '3d'
     st.session_state.cached_simulation_speed = 1.0
+    st.session_state.initialized = True
 
 # Display app title
 st.title("Neural Carnival 🧠")
@@ -71,7 +74,7 @@ try:
     create_enhanced_ui()
 except Exception as e:
     logger.error(f"Error importing or running UI components: {str(e)}")
-    logger.error(f"Traceback: {e.__traceback__}")
+    logger.error(traceback.format_exc())
     st.error(f"Error initializing application: {str(e)}")
     st.info("Please check the logs for more details.")
     
