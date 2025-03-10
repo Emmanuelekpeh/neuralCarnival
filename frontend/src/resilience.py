@@ -52,8 +52,6 @@ class ResilienceManager:
             
             return filepath
         except Exception as e:
-            if hasattr(st, 'error'):
-                st.error(f"Error creating checkpoint: {str(e)}")
             print(f"Error creating checkpoint: {str(e)}")
             return None
     
@@ -88,8 +86,6 @@ class ResilienceManager:
                 
             return True
         except Exception as e:
-            if hasattr(st, 'error'):
-                st.error(f"Error restoring checkpoint: {str(e)}")
             print(f"Error restoring checkpoint: {str(e)}")
             traceback.print_exc()
             return False
@@ -119,19 +115,17 @@ class ResilienceManager:
         
         # Don't try too many times
         if self.recovery_attempts > 3:
-            if hasattr(st, 'error'):
-                st.error("Too many recovery attempts. Please restart the application.")
+            print("Too many recovery attempts. Please restart the application.")
             return False
             
         # Try to restore from checkpoint
         if self.restore_checkpoint():
-            if hasattr(st, 'success'):
-                st.success("Successfully recovered from checkpoint")
+            print("Successfully recovered from checkpoint")
             return True
         
         # If restoration fails, create a new simulator
         try:
-            from neuneuraly import NetworkSimulator
+            from frontend.src.neuneuraly import NetworkSimulator
             
             # Stop existing simulator if present
             if self.simulator:
@@ -148,13 +142,9 @@ class ResilienceManager:
             if hasattr(st, 'session_state'):
                 st.session_state.simulator = self.simulator
                 
-            if hasattr(st, 'success'):
-                st.success("Created a new simulator after recovery failed")
-                
+            print("Created a new simulator after recovery failed")
             return True
         except Exception as e:
-            if hasattr(st, 'error'):
-                st.error(f"Recovery failed: {str(e)}")
             print(f"Recovery failed: {str(e)}")
             return False
 
