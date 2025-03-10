@@ -201,27 +201,38 @@ class Node:
 
     def update_position(self, network):
         """Update the node's position based on connections and natural movement."""
+        # Ensure position and velocity are lists
+        pos = self.get_position()
+        vel = self.velocity
+        if isinstance(vel, tuple):
+            vel = list(vel)
+        
         # Update velocity based on connections
         for conn_id, strength in self.connections.items():
             if conn_id < len(network.nodes):
                 target = network.nodes[conn_id]
-                target_pos = target.position  # Will use the property getter
+                target_pos = target.get_position()  # Use the getter method
                 for i in range(3):
-                    force = (target_pos[i] - self.position[i]) * strength * 0.01
-                    self.velocity[i] += force
+                    force = (target_pos[i] - pos[i]) * strength * 0.01
+                    vel[i] += force
         
         # Add random movement and update position
         for i in range(3):
-            self.velocity[i] += random.uniform(-0.01, 0.01)
-            self.velocity[i] *= 0.95
-            self.position[i] += self.velocity[i]
-            self.position[i] = max(-15, min(15, self.position[i]))
+            vel[i] += random.uniform(-0.01, 0.01)
+            vel[i] *= 0.95
+            pos[i] += vel[i]
+            pos[i] = max(-15, min(15, pos[i]))
+        
+        # Update the position and velocity
+        self.set_position(pos)
+        self.velocity = vel
 
     def get_position(self):
         """Get the current position as a list."""
-        if isinstance(self.position, tuple):
-            self.position = list(self.position)
-        return self.position
+        pos = self.position
+        if isinstance(pos, tuple):
+            pos = list(pos)
+        return pos
 
     def set_position(self, pos):
         """Set the position, ensuring it's stored as a list."""
