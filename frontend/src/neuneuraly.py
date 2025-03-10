@@ -33,7 +33,7 @@ except ImportError:
 # Define NODE_TYPES first since it's used by all classes
 NODE_TYPES = {
     'explorer': {
-        'color': '#FF5733',
+        'color': '#FF5733',  # Orange-red
         'size_range': (50, 200),
         'firing_rate': (0.2, 0.5),
         'decay_rate': (0.03, 0.08),
@@ -42,7 +42,7 @@ NODE_TYPES = {
         'spontaneous_firing': 0.03
     },
     'memory': {
-        'color': '#9B59B6',
+        'color': '#9B59B6',  # Purple
         'size_range': (80, 180),
         'firing_rate': (0.05, 0.15),
         'decay_rate': (0.01, 0.03),
@@ -51,7 +51,7 @@ NODE_TYPES = {
         'spontaneous_firing': 0.01
     },
     'connector': {
-        'color': '#33A8FF',
+        'color': '#33A8FF',  # Blue
         'size_range': (100, 250),
         'firing_rate': (0.1, 0.3),
         'decay_rate': (0.02, 0.05),
@@ -60,16 +60,16 @@ NODE_TYPES = {
         'spontaneous_firing': 0.02
     },
     'inhibitor': {
-        'color': '#27AE60',
-        'size_range': (70, 150),
-        'firing_rate': (0.1, 0.2),
-        'decay_rate': (0.02, 0.06),
-        'connection_strength': -1.0,  # Negative strength to inhibit connected nodes
+        'color': '#E74C3C',  # Red
+        'size_range': (30, 120),
+        'firing_rate': (0.05, 0.1),
+        'decay_rate': (0.05, 0.1),
+        'connection_strength': 0.8,
         'resurrection_chance': 0.1,
         'spontaneous_firing': 0.02
     },
     'processor': {
-        'color': '#F1C40F',
+        'color': '#F1C40F',  # Yellow
         'size_range': (60, 170),
         'firing_rate': (0.15, 0.35),
         'decay_rate': (0.02, 0.04),
@@ -77,6 +77,69 @@ NODE_TYPES = {
         'resurrection_chance': 0.15,
         'spontaneous_firing': 0.025,
         'signal_transformation': True  # Special ability to transform signals
+    },
+    'catalyst': {
+        'color': '#2ECC71',  # Green
+        'size_range': (40, 150),
+        'firing_rate': (0.15, 0.4),
+        'decay_rate': (0.04, 0.09),
+        'connection_strength': 1.8,
+        'resurrection_chance': 0.18,
+        'spontaneous_firing': 0.03
+    },
+    'oscillator': {
+        'color': '#FFC300',  # Gold/Yellow
+        'size_range': (60, 160),
+        'firing_rate': (0.3, 0.7),
+        'decay_rate': (0.02, 0.06),
+        'connection_strength': 1.4,
+        'resurrection_chance': 0.2,
+        'spontaneous_firing': 0.04
+    },
+    'bridge': {
+        'color': '#1ABC9C',  # Turquoise
+        'size_range': (70, 170),
+        'firing_rate': (0.1, 0.2),
+        'decay_rate': (0.01, 0.04),
+        'connection_strength': 1.7,
+        'resurrection_chance': 0.22,
+        'spontaneous_firing': 0.02
+    },
+    'pruner': {
+        'color': '#E74C3C',  # Crimson
+        'size_range': (40, 130),
+        'firing_rate': (0.15, 0.25),
+        'decay_rate': (0.07, 0.12),
+        'connection_strength': 0.6,
+        'resurrection_chance': 0.08,
+        'spontaneous_firing': 0.01
+    },
+    'mimic': {
+        'color': '#8E44AD',  # Purple
+        'size_range': (50, 160),
+        'firing_rate': (0.1, 0.4),
+        'decay_rate': (0.02, 0.05),
+        'connection_strength': 1.3,
+        'resurrection_chance': 0.17,
+        'spontaneous_firing': 0.02
+    },
+    'attractor': {
+        'color': '#2980B9',  # Royal Blue
+        'size_range': (80, 200),
+        'firing_rate': (0.05, 0.15),
+        'decay_rate': (0.01, 0.03),
+        'connection_strength': 2.5,
+        'resurrection_chance': 0.3,
+        'spontaneous_firing': 0.01
+    },
+    'sentinel': {
+        'color': '#27AE60',  # Emerald
+        'size_range': (70, 150),
+        'firing_rate': (0.2, 0.3),
+        'decay_rate': (0.02, 0.04),
+        'connection_strength': 1.0,
+        'resurrection_chance': 0.4,
+        'spontaneous_firing': 0.03
     }
 }
 
