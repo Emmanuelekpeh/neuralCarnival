@@ -12,22 +12,59 @@ import numpy as np
 import traceback
 from collections import deque
 
+# Set up logging first, before any imports
+logger = logging.getLogger(__name__)
+
 # Import NODE_TYPES and NeuralNetwork
 try:
     from .neural_network import NODE_TYPES, NeuralNetwork
-except ImportError:
+    logger.info("Successfully imported from .neural_network")
+except ImportError as e:
+    logger.warning(f"Relative import failed: {str(e)}")
     try:
+        # Try absolute import
         from frontend.src.neural_network import NODE_TYPES, NeuralNetwork
-    except ImportError:
+        logger.info("Successfully imported from frontend.src.neural_network")
+    except ImportError as e2:
+        logger.error(f"Absolute import failed: {str(e2)}")
+        # Define fallback NODE_TYPES
         NODE_TYPES = {
             'input': {'color': '#00FF00'},
             'hidden': {'color': '#0000FF'},
             'output': {'color': '#FF0000'}
         }
         logger.error("Failed to import NODE_TYPES and NeuralNetwork, using fallback definitions")
-
-# Set up logging
-logger = logging.getLogger(__name__)
+        
+        # Try to import from the current directory
+        try:
+            import sys
+            import os
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            if current_dir not in sys.path:
+                sys.path.insert(0, current_dir)
+            from neural_network import NODE_TYPES, NeuralNetwork
+            logger.info("Successfully imported from current directory")
+        except ImportError as e3:
+            logger.error(f"Current directory import failed: {str(e3)}")
+            # Define a minimal NeuralNetwork class if import fails
+            class NeuralNetwork:
+                def __init__(self, max_nodes=200):
+                    self.max_nodes = max_nodes
+                    self.nodes = []
+                    logger.warning("Using fallback NeuralNetwork class")
+                
+                def add_node(self, visible=True, node_type='hidden'):
+                    # Simple node implementation
+                    node = type('Node', (), {
+                        'id': len(self.nodes),
+                        'visible': visible,
+                        'node_type': node_type,
+                        'position': [0, 0, 0],
+                        'energy': 100.0,
+                        'connections': []
+                    })
+                    self.nodes.append(node)
+                    return node
 
 class NetworkSimulator:
     """A simulator for the neural network."""

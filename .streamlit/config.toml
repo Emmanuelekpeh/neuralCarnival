@@ -9,19 +9,29 @@ font = "sans serif"
 maxUploadSize = 200
 enableXsrfProtection = false
 enableCORS = true
+headless = true
+port = 8501
+baseUrlPath = ""
 
 [browser]
 gatherUsageStats = false
+serverAddress = "localhost"
+serverPort = 8501
 
 [runner]
 magicEnabled = true
+fastReruns = true
 
 [logger]
-level = "info"
+level = "debug"
+messageFormat = "%(asctime)s - %(name)s - %(levelname)s - [%(threadName)s] - %(message)s"
 
 [client]
 showErrorDetails = true
 toolbarMode = "minimal"
+caching = true
 
 [global]
-developmentMode = false 
+developmentMode = false
+disableWatchdogWarning = true
+suppressDeprecationWarnings = true 

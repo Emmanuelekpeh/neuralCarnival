@@ -1,78 +1,72 @@
 # Neural Carnival
 
-A sophisticated neural network simulation and visualization system that allows you to explore emergent behaviors in complex neural networks.
+An interactive neural network visualization and simulation application.
+
+## Overview
+
+Neural Carnival is a sophisticated neural network simulation and visualization system that allows you to observe the growth and behavior of neural networks in real-time. The application provides an intuitive interface for interacting with the simulation, adding energy zones, and observing the network's evolution.
 
 ## Features
 
-- **Interactive Neural Network Simulation**: Create and observe dynamic neural networks with different node types
-- **Advanced 3D/2D Visualization**: Visualize network evolution and activity in real-time
-- **Video Export**: Create videos of network evolution for presentations or analysis
-- **Resilience System**: Automatic checkpointing and error recovery to prevent data loss
-- **GPU Acceleration**: Optional CUDA acceleration via CuPy for faster simulations
-- **Analysis Tools**: Comprehensive metrics and pattern detection
+- Real-time 3D visualization of neural networks
+- Interactive controls for simulation parameters
+- Energy zone management
+- Node type diversity with specialized behaviors
+- Automatic node generation
+- Performance metrics and statistics
 
 ## Installation
 
-### Prerequisites
-
-- Python 3.8 or higher
-- CUDA toolkit (optional, for GPU acceleration)
-
-### Setup
-
 1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/neuralCarnival.git
+   ```
+   git clone https://github.com/Emmanuelekpeh/neuralCarnival.git
    cd neuralCarnival
    ```
 
-2. Install dependencies:
-   ```bash
+2. Install the required dependencies:
+   ```
    pip install -r requirements.txt
    ```
 
-3. Run the application:
-   ```bash
-   python run_simulation.py
-   ```
+## Running the Application
 
-## Usage Guide
+### Local Development
 
-### Basic Controls
+To run the application locally:
 
-- **Start/Stop**: Control simulation execution
-- **Add Nodes**: Add different types of nodes to the network
-- **Adjust Parameters**: Modify simulation speed, learning rate, and other parameters
-- **Visualization Modes**: Switch between 2D and 3D visualizations
+```
+streamlit run streamlit_app.py
+```
 
-### Node Types
+### Streamlit Cloud
 
-- **Explorer**: High firing rate, creates many connections
-- **Connector**: Specializes in forming strong connections between nodes
-- **Memory**: Retains activation longer, slower decay rate
-- **Inhibitor**: Reduces activation of connected nodes
-- **Processor**: Specialized in signal processing and transformation
+For Streamlit Cloud deployment, use:
 
-### Advanced Features
+```
+streamlit run streamlit_cloud_app.py
+```
 
-- **Export Video**: Create videos of network evolution
-- **Save/Load**: Save and load network states
-- **Analysis**: View network metrics and detect patterns
+## Usage
+
+1. **Start/Stop Simulation**: Use the Start/Stop buttons to control the simulation.
+2. **Energy Zones**: Add or remove energy zones to influence node growth and behavior.
+3. **Weather Effects**: Trigger drought or rain to affect the energy levels across the network.
+4. **Visualization Controls**: Adjust the visualization settings to your preference.
+5. **Auto-generation**: Enable or disable automatic node generation.
 
 ## Project Structure
 
-- `run_simulation.py`: Main entry point
-- `frontend/src/`: Core implementation
+- `streamlit_app.py`: Main application entry point
+- `frontend/src/`: Core modules
   - `neuneuraly.py`: Neural network implementation
-  - `integration.py`: UI integration
-  - `animation_utils.py`: Animation and video export
-  - `neural_utils.py`: Analysis utilities
-  - `resilience.py`: Checkpoint and recovery system
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+  - `network_simulator.py`: Simulation engine
+  - `continuous_visualization.py`: Visualization components
+  - `streamlit_components.py`: UI components
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License
+
+## Contact
+
+For questions or feedback, please contact [your-email@example.com](mailto:your-email@example.com).
