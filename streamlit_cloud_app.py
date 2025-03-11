@@ -64,20 +64,12 @@ try:
     # Import neural network components directly
     logger.info("Importing neural network components...")
     
-    # Import the required modules directly
-    from frontend.src.neural_network import NeuralNetwork
+    # Import the required modules directly - using the correct module names
+    from frontend.src.neuneuraly import NeuralNetwork
     from frontend.src.network_simulator import NetworkSimulator
     from frontend.src.continuous_visualization import ContinuousVisualizer
     
-    # Import streamlit_app.py functions without executing the module
-    logger.info("Loading streamlit_app.py functions...")
-    
-    # Load the streamlit_app module without executing it
-    spec = importlib.util.spec_from_file_location("streamlit_app", os.path.join(current_dir, "streamlit_app.py"))
-    streamlit_app_module = importlib.util.module_from_spec(spec)
-    
-    # We don't execute the module to avoid the set_page_config call
-    # Instead, we'll extract and use the functions we need
+    logger.info("Successfully imported neural network components")
     
     # Run our own implementation of the main function
     logger.info("Running Neural Carnival application...")
