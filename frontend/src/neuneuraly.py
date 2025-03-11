@@ -228,6 +228,11 @@ class Node:
         self.energy_decay_rate = random.uniform(0.1, 0.5)  # Energy lost per step
         self.energy_consumption_rate = random.uniform(5.0, 15.0)  # Energy used when firing
         self.energy_absorption_rate = random.uniform(0.5, 2.0)  # Multiplier for absorbing ambient energy
+        
+        # Energy transfer properties
+        self.energy_transfer_rate = random.uniform(0.5, 2.0)  # Rate at which energy can be transferred
+        self.energy_transfer_threshold = random.uniform(30.0, 70.0)  # Energy level below which node will request energy
+        self.energy_surplus_threshold = random.uniform(70.0, 90.0)  # Energy level above which node can share energy
 
     @property
     def position(self):
@@ -255,50 +260,49 @@ class Node:
 
     def update(self, network):
         """Update the node's state."""
-        # Increment age
         self.age += 1
+        
+        # Update firing animation
+        self.update_firing_animation()
+        
+        # Update signal tendrils
+        self._update_signal_tendrils()
+        
+        # Update firing particles
+        self._update_firing_particles()
         
         # Decay energy over time
         self.energy -= self.energy_decay_rate
         
         # Check for energy depletion
         if self.energy <= 0 and self.visible:
-            self.visible = False
+            network.send_command({"type": "remove_node", "node_id": self.id})
             return
         
-        # Absorb ambient energy from the environment
-        nearby_energy_sources = self._detect_nearby_energy(network)
-        for source, distance in nearby_energy_sources:
-            # Closer sources provide more energy
-            energy_gain = source * (1.0 / (distance + 1.0)) * self.energy_absorption_rate
-            self.energy = min(100.0, self.energy + energy_gain)
+        # Absorb ambient energy from the environment if not in drought
+        if not network.is_drought_period:
+            nearby_energy_sources = self._detect_nearby_energy(network)
+            for source, distance in nearby_energy_sources:
+                # Closer sources provide more energy
+                energy_gain = source * (1.0 / (distance + 1.0)) * self.energy_absorption_rate
+                self.energy = min(100.0, self.energy + energy_gain)
         
-        if not self.visible:
-            return
-
+        # Energy transfer through connections
+        self._transfer_energy_through_connections(network)
+        
         # Update position
         self.update_position(network)
-
-        # Update firing animation
-        self.update_firing_animation()
-
-        # Increase time since last fire
-        self.time_since_last_fire += 1
-
-        # Apply activation decay
-        self.activation = max(0.0, self.activation - self.decay_rate)
-
-        # Check if activation exceeds threshold
-        if self.activation >= self.firing_threshold:
+        
+        # Determine if the node should fire
+        time_since_last_fired = network.step_count - self.last_fired
+        firing_probability = self.firing_rate / 100.0
+        
+        # Adjust firing probability based on energy level
+        energy_factor = max(0.1, min(1.0, self.energy / 100.0))
+        firing_probability *= energy_factor
+        
+        if time_since_last_fired > 5 and random.random() < firing_probability:
             self.fire(network)
-            self.time_since_last_fire = 0
-
-        # Spontaneous firing based on node type
-        elif random.random() < self.spontaneous_firing_chance * (1 + self.time_since_last_fire / 100):
-            # Increase chance of spontaneous firing the longer it's been since last fire
-            self.activation = self.firing_threshold
-            self.fire(network)
-            self.time_since_last_fire = 0
 
     def connect(self, target_node):
         """Connect this node to another node."""
@@ -352,56 +356,57 @@ class Node:
 
     def fire(self, network):
         """Fire the node, activating connected nodes."""
-        if not self.visible:
-            return
-        
         # Consume energy when firing
         self.energy -= self.energy_consumption_rate
         if self.energy < 0:
             self.energy = 0
             return  # Not enough energy to fire
         
-        # Mark as firing for animation
+        # Record firing
         self.is_firing = True
         self.firing_animation_step = 0
-        self.last_fired = network.simulation_steps
-        self.firing_history.append(network.simulation_steps)
+        self.last_fired = network.step_count
+        self.firing_history.append(network.step_count)
         
-        # Create firing particles for visualization
+        # Create firing particles
         self._create_firing_particles()
         
-        # Get all connected nodes
-        connected_nodes = []
-        for conn_id, strength in self.connections.items():
-            if conn_id < len(network.nodes):
-                connected_nodes.append((network.nodes[conn_id], strength))
+        # Get connected nodes
+        connected_nodes = [(node_id, data) for node_id, data in self.connections.items()]
         
-        # Special behavior for inhibitor nodes
+        # Determine which nodes to activate based on node type
         if self.type == 'inhibitor':
             # Inhibitor nodes reduce activation of connected nodes
-            for target, strength in connected_nodes:
-                if target.visible:
-                    # Reduce activation (strength is negative for inhibitors)
-                    target.activation = max(0, target.activation + strength * 0.5)
-                    # Create signal tendril for visualization
-                    self._create_signal_tendril(target)
+            for node_id, connection_data in connected_nodes:
+                target_node = next((n for n in network.nodes if n.id == node_id and n.visible), None)
+                if target_node:
+                    # Create visual signal
+                    self._create_signal_tendril(target_node)
+                    
+                    # Reduce activation based on connection strength
+                    inhibition_strength = connection_data.get('strength', 0.5) * 0.8
+                    target_node.activation = max(0, target_node.activation - inhibition_strength)
         
-        # Special behavior for processor nodes
         elif self.type == 'processor':
-            # Processor nodes transform signals before passing them on
-            # They activate fewer nodes but with higher intensity
+            # Processor nodes activate a subset of connected nodes based on connection strength
             if connected_nodes:
-                # Select a subset of connected nodes to activate
+                # Select nodes with stronger connections more often
                 selected_nodes = random.sample(
-                    connected_nodes, 
+                    [(network.get_node_by_id(node_id), data.get('strength', 0.5)) 
+                     for node_id, data in connected_nodes if network.get_node_by_id(node_id) and network.get_node_by_id(node_id).visible],
                     min(len(connected_nodes), max(1, len(connected_nodes) // 2))
                 )
                 for target, strength in selected_nodes:
                     if target.visible:
-                        # Enhanced activation
-                        target.activation = min(1.0, target.activation + strength * 1.5)
-                        # Create signal tendril for visualization
+                        # Create visual signal
                         self._create_signal_tendril(target)
+                        
+                        # Activate based on connection strength
+                        target.activation += strength * 0.8
+                        
+                        # Chance to fire immediately based on connection strength
+                        if random.random() < strength * 0.3:
+                            target.fire(network)
         
         # Default behavior for other node types
         else:
@@ -574,6 +579,45 @@ class Node:
                         energy_sources.append((particle['energy'], distance))
         
         return energy_sources
+
+    def _transfer_energy_through_connections(self, network):
+        """Transfer energy through connections to maintain network health."""
+        # If energy is low, request energy from connected nodes
+        if self.energy < self.energy_transfer_threshold:
+            for node_id, connection in self.connections.items():
+                target_node = network.get_node_by_id(node_id)
+                if target_node and target_node.energy > target_node.energy_surplus_threshold:
+                    # Calculate energy to transfer based on connection strength
+                    connection_strength = connection.get('strength', 0.5)
+                    energy_to_transfer = min(
+                        target_node.energy_transfer_rate * connection_strength,
+                        target_node.energy - target_node.energy_surplus_threshold * 0.8
+                    )
+                    
+                    # Transfer energy
+                    target_node.energy -= energy_to_transfer
+                    self.energy += energy_to_transfer * 0.9  # 10% energy loss during transfer
+                    
+                    # Create visual effect for energy transfer
+                    self._create_energy_transfer_visual(target_node)
+                    
+                    # Stop requesting if energy level is now sufficient
+                    if self.energy >= self.energy_transfer_threshold:
+                        break
+
+    def _create_energy_transfer_visual(self, source_node):
+        """Create a visual effect for energy transfer between nodes."""
+        # Similar to signal tendrils but with different color/appearance
+        tendril = {
+            'source': source_node.get_position(),
+            'target': self.get_position(),
+            'progress': 0.0,
+            'color': '#00FFFF',  # Cyan color for energy transfer
+            'width': 2.0,
+            'speed': 0.1,
+            'type': 'energy_transfer'
+        }
+        self.signal_tendrils.append(tendril)
 
 class PatternDetector:
     """Enhanced pattern recognition system."""
@@ -911,34 +955,34 @@ class BackgroundRenderer:
                 time.sleep(0.5)  # Longer delay on error
 
 class NetworkSimulator:
-    """Manages the simulation of a neural network."""
+    """Simulates a neural network."""
     
     def __init__(self, network=None, max_nodes=200):
-        """Initialize the simulator with an optional existing network."""
-        self.network = network if network else NeuralNetwork(max_nodes=max_nodes)
+        """Initialize the simulator with the given network."""
+        self.network = network or NeuralNetwork(max_nodes=max_nodes)
         self.running = False
-        self.simulation_thread = None
+        self.thread = None
+        self.step_count = 0
         self.command_queue = queue.Queue()
         self.results_queue = queue.Queue()
-        self.last_render_time = 0
-        self.render_needed = True
-        self.renderer = BackgroundRenderer(self)
-        self.explosion_particles = []
-        self.node_lifetimes = {}  # Track how long nodes have been alive
+        self.steps_per_second = 1.0
         self.auto_generate_nodes = False
-        self.node_generation_rate = 0.1  # Nodes per second
-        self.last_node_generation_time = time.time()
+        self.node_generation_rate = (5, 15)  # min, max seconds between node generation
+        self.last_node_generation = 0
         self.max_nodes = max_nodes
-        self.node_generation_interval_range = (2, 10)  # Random interval between node generation in seconds
-        self.next_node_generation_time = time.time() + random.uniform(*self.node_generation_interval_range)
+        self.explosion_particles = []
+        self.needs_render_flag = True
+        self.renderer = BackgroundRenderer(self)
         
-        # Initialize cached visualization settings
-        self.cached_viz_mode = '3d'  # Default visualization mode
-        self.cached_simulation_speed = 1.0  # Default simulation speed
-
-        # Start with a single node
-        if not self.network.nodes:
-            self._add_initial_node()
+        # Drought period settings
+        self.is_drought_period = False
+        self.drought_probability = 0.001  # Chance of drought starting each step
+        self.drought_duration_range = (100, 500)  # Steps
+        self.drought_end_step = 0
+        self.drought_history = []
+        
+        # Add initial node
+        self._add_initial_node()
 
     def _add_initial_node(self):
         """Add a single initial node to the network."""
@@ -965,9 +1009,9 @@ class NetworkSimulator:
 
         self.running = True
         self.steps_per_second = steps_per_second
-        self.simulation_thread = threading.Thread(target=self._run_simulation)
-        self.simulation_thread.daemon = True
-        self.simulation_thread.start()
+        self.thread = threading.Thread(target=self._run_simulation)
+        self.thread.daemon = True
+        self.thread.start()
 
         # Start the renderer
         self.renderer.start()
@@ -975,57 +1019,53 @@ class NetworkSimulator:
     def stop(self):
         """Stop the simulation."""
         self.running = False
-        if self.simulation_thread:
-            self.simulation_thread.join(timeout=1.0)
+        if self.thread:
+            self.thread.join(timeout=1.0)
 
         # Stop the renderer
         self.renderer.stop()
 
     def _run_simulation(self):
         """Run the simulation loop."""
-        last_time = time.time()
-        step_interval = 1.0 / self.steps_per_second
-
         try:
+            last_time = time.time()
             while self.running:
                 current_time = time.time()
                 elapsed = current_time - last_time
-
-                # Process commands
-                self._process_commands()
-
-                # Check if it's time for a step
-                if elapsed >= step_interval:
-                    # Update the network
+                
+                if elapsed >= 1.0 / self.steps_per_second:
+                    last_time = current_time
+                    
+                    # Process commands
+                    self._process_commands()
+                    
+                    # Update drought status
+                    self._update_drought_status()
+                    
+                    # Auto-generate nodes if enabled
+                    if self.auto_generate_nodes:
+                        self._auto_generate_nodes(current_time)
+                    
+                    # Step the network
                     self.network.step()
-
+                    self.step_count += 1
+                    
                     # Process node lifetimes
                     self._process_node_lifetimes()
-
-                    # Auto-generate nodes if enabled
-                    self._auto_generate_nodes(current_time)
-
+                    
                     # Update explosion particles
                     self._update_explosion_particles()
-
-                    # Record statistics
-                    self.network.record_stats()
-
-                    # Mark that a render is needed
-                    self.render_needed = True
-
-                    # Update last step time
-                    last_time = current_time
-
-                # Request a render if needed
-                if self.render_needed and current_time - self.last_render_time > 0.1:
-                    # Use cached visualization mode instead of accessing session_state directly
-                    self.renderer.request_render(mode=self.cached_viz_mode)
-                    self.last_render_time = current_time
-                    self.render_needed = False
-
-                # Sleep to avoid using too much CPU
-                time.sleep(0.01)
+                    
+                    # Request a render if needed
+                    if self.needs_render_flag:
+                        try:
+                            self.renderer.request_render(mode=st.session_state.viz_mode)
+                        except (AttributeError, KeyError):
+                            # Default to 3D if viz_mode not set
+                            self.renderer.request_render(mode='3d')
+                        self.needs_render_flag = False
+                
+                time.sleep(0.01)  # Prevent CPU hogging
         except Exception as e:
             print(f"Error in simulation thread: {str(e)}")
             traceback.print_exc()
@@ -1138,11 +1178,11 @@ class NetworkSimulator:
 
     def needs_render(self):
         """Check if a render is needed."""
-        return self.render_needed
+        return self.needs_render_flag
 
     def mark_rendered(self):
         """Mark that a render has been completed."""
-        self.render_needed = False
+        self.needs_render_flag = False
 
     def get_rendering_state(self):
         """Get the current rendering state."""
@@ -1232,6 +1272,39 @@ class NetworkSimulator:
         """Load a network from a saved state."""
         network = NeuralNetwork.load_state(filename)
         return cls(network=network)
+
+    def _update_drought_status(self):
+        """Update the drought status of the simulation."""
+        # If not in drought, check if a drought should start
+        if not self.is_drought_period:
+            if random.random() < self.drought_probability:
+                self.is_drought_period = True
+                drought_duration = random.randint(*self.drought_duration_range)
+                self.drought_end_step = self.step_count + drought_duration
+                self.drought_history.append({
+                    'start_step': self.step_count,
+                    'duration': drought_duration
+                })
+                # Notify the UI
+                self.results_queue.put({
+                    'type': 'drought_started',
+                    'duration': drought_duration
+                })
+        # If in drought, check if it should end
+        elif self.step_count >= self.drought_end_step:
+            self.is_drought_period = False
+            # Notify the UI
+            self.results_queue.put({
+                'type': 'drought_ended',
+                'duration': self.drought_end_step - self.step_count
+            })
+
+    def get_node_by_id(self, node_id):
+        """Get a node by its ID."""
+        for node in self.network.nodes:
+            if node.id == node_id:
+                return node
+        return None
 
 # Define helper functions
 def parse_contents(contents, filename):

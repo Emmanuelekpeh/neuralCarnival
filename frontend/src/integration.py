@@ -16,6 +16,8 @@ import logging
 from datetime import datetime
 import importlib
 import random
+import pandas as pd
+import plotly.graph_objects as go
 
 # Setup logging
 logger = logging.getLogger("neural_carnival.integration")
@@ -238,26 +240,87 @@ def create_enhanced_ui():
         if st.session_state.active_tab == "Help":
             _display_help_information()
 
+def _initialize_simulator():
+    """Initialize the simulator if it doesn't exist."""
+    try:
+        if 'simulator' not in st.session_state or st.session_state.simulator is None:
+            # Create a new simulator
+            from frontend.src.neuneuraly import NetworkSimulator
+            
+            # Get max nodes from session state or use default
+            max_nodes = st.session_state.get('max_nodes', 200)
+            
+            # Create the simulator
+            st.session_state.simulator = NetworkSimulator(max_nodes=max_nodes)
+            
+            # Initialize other simulation parameters
+            st.session_state.simulator.steps_per_second = st.session_state.get('simulation_speed', 1.0)
+            st.session_state.simulator.auto_generate_nodes = st.session_state.get('auto_generate_nodes', False)
+            
+            # Log initialization
+            logger.info(f"Initialized simulator with max_nodes={max_nodes}")
+            
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error initializing simulator: {str(e)}")
+        logger.error(f"Error initializing simulator: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False
+
 def _display_simulation_interface():
-    """Display the simulation interface."""
+    """Display the main simulation interface."""
     try:
         # Check if simulator exists
-        if st.session_state.simulator is None:
-            st.warning("Simulator not initialized. Click the button below to start.")
-            if st.button("Initialize Simulator", key="init_sim_button"):
-                if _start_simulation():
-                    st.success("Simulator initialized successfully!")
-                    # Force a rerun immediately after initialization to load the interface
-                    time.sleep(0.1)
-                    st.rerun()
-                else:
-                    st.error("Failed to initialize simulator.")
-            return
+        if 'simulator' not in st.session_state or not st.session_state.simulator:
+            _initialize_simulator()
         
-        # Create columns for controls
-        col1, col2 = st.columns(2)
+        # Create columns for layout
+        col1, col2 = st.columns([3, 1])
         
         with col1:
+            # Display drought status if active
+            if hasattr(st.session_state.simulator, 'is_drought_period') and st.session_state.simulator.is_drought_period:
+                remaining_steps = st.session_state.simulator.drought_end_step - st.session_state.simulator.step_count
+                st.warning(f"⚠️ **DROUGHT PERIOD ACTIVE** - Resources are scarce! Remaining steps: {remaining_steps}")
+            
+            # Display visualization
+            st.subheader("Neural Network Visualization")
+            viz_container = st.empty()
+            
+            # Get the latest visualization
+            if st.session_state.simulator:
+                viz_fig = st.session_state.simulator.renderer.get_latest_visualization()
+                if viz_fig:
+                    viz_container.plotly_chart(viz_fig, use_container_width=True)
+                else:
+                    viz_container.info("Visualization loading...")
+            
+            # Display simulation statistics
+            if st.session_state.simulator and st.session_state.simulator.network:
+                st.subheader("Simulation Statistics")
+                
+                # Create columns for statistics
+                stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+                
+                with stat_col1:
+                    st.metric("Total Nodes", len(st.session_state.simulator.network.nodes))
+                
+                with stat_col2:
+                    visible_nodes = sum(1 for node in st.session_state.simulator.network.nodes if node.visible)
+                    st.metric("Visible Nodes", visible_nodes)
+                
+                with stat_col3:
+                    total_connections = sum(len(node.connections) for node in st.session_state.simulator.network.nodes)
+                    st.metric("Total Connections", total_connections)
+                
+                with stat_col4:
+                    # Count nodes that are currently firing
+                    firing_nodes = sum(1 for node in st.session_state.simulator.network.nodes 
+                                      if hasattr(node, 'is_firing') and node.is_firing)
+                    st.metric("Firing Nodes", firing_nodes)
+        
+        with col2:
             # Simulation controls
             st.subheader("Simulation Controls")
             
@@ -297,8 +360,65 @@ def _display_simulation_interface():
                     if st.session_state.simulator:
                         st.session_state.simulator.send_command({'type': 'reset'})
                         st.success("Simulation reset with a single node.")
-        
-        with col2:
+            
+            # Drought controls
+            st.subheader("Drought Controls")
+            
+            # Display current drought status
+            if hasattr(st.session_state.simulator, 'is_drought_period'):
+                if st.session_state.simulator.is_drought_period:
+                    remaining_steps = st.session_state.simulator.drought_end_step - st.session_state.simulator.step_count
+                    st.info(f"Drought active - {remaining_steps} steps remaining")
+                    
+                    # End drought button
+                    if st.button("End Drought Now", key="end_drought_button"):
+                        st.session_state.simulator.is_drought_period = False
+                        st.session_state.simulator.drought_end_step = 0
+                        st.success("Drought period ended manually.")
+                else:
+                    st.info("No drought active")
+                    
+                    # Start drought button
+                    col_d1, col_d2 = st.columns(2)
+                    with col_d1:
+                        drought_duration = st.number_input(
+                            "Duration (steps)", 
+                            min_value=50, 
+                            max_value=1000, 
+                            value=200,
+                            step=50,
+                            help="How long the drought will last in simulation steps.",
+                            key="drought_duration_input"
+                        )
+                    
+                    with col_d2:
+                        if st.button("Start Drought", key="start_drought_button"):
+                            st.session_state.simulator.is_drought_period = True
+                            st.session_state.simulator.drought_end_step = st.session_state.simulator.step_count + drought_duration
+                            st.session_state.simulator.drought_history.append({
+                                'start_step': st.session_state.simulator.step_count,
+                                'duration': drought_duration,
+                                'manual': True
+                            })
+                            st.success(f"Drought started for {drought_duration} steps.")
+                
+                # Drought probability settings
+                st.markdown("#### Random Drought Settings")
+                drought_probability = st.slider(
+                    "Drought Probability", 
+                    min_value=0.0, 
+                    max_value=0.01, 
+                    value=getattr(st.session_state.simulator, 'drought_probability', 0.001),
+                    step=0.001,
+                    format="%.3f",
+                    help="Probability of a drought starting each step (0.001 = 0.1%).",
+                    key="drought_probability_slider"
+                )
+                
+                # Update drought probability if changed
+                if hasattr(st.session_state.simulator, 'drought_probability') and drought_probability != st.session_state.simulator.drought_probability:
+                    st.session_state.simulator.drought_probability = drought_probability
+            
             # Simulation parameters
             st.subheader("Simulation Parameters")
             
@@ -314,10 +434,8 @@ def _display_simulation_interface():
             )
             if simulation_speed != st.session_state.simulation_speed:
                 st.session_state.simulation_speed = simulation_speed
-                # Update the simulator's property directly if it exists
                 if st.session_state.simulator:
                     st.session_state.simulator.steps_per_second = simulation_speed
-                    st.session_state.simulator.cached_simulation_speed = simulation_speed
             
             # Auto-generate nodes
             auto_generate = st.checkbox(
@@ -330,10 +448,6 @@ def _display_simulation_interface():
                 st.session_state.auto_generate_nodes = auto_generate
                 if st.session_state.simulator:
                     st.session_state.simulator.auto_generate_nodes = auto_generate
-                    st.session_state.simulator.send_command({
-                        'type': 'set_auto_generate',
-                        'value': auto_generate
-                    })
             
             # Node generation parameters (only show if auto-generate is enabled)
             if auto_generate:
@@ -386,174 +500,131 @@ def _display_simulation_interface():
                             'type': 'set_max_nodes',
                             'value': max_nodes
                         })
-        
-        # Visualization options
-        st.subheader("Visualization Options")
-        col3, col4 = st.columns(2)
-        
-        with col3:
-            # Visualization mode
-            viz_mode = st.radio(
-                "Visualization Mode",
-                options=["3d", "2d"],
-                index=0 if st.session_state.viz_mode == "3d" else 1,
-                horizontal=True,
-                help="Choose between 2D and 3D visualization.",
-                key="viz_mode_radio_main"
-            )
-            if viz_mode != st.session_state.viz_mode:
-                st.session_state.viz_mode = viz_mode
-                if st.session_state.simulator:
-                    st.session_state.simulator.cached_viz_mode = viz_mode
-        
-        with col4:
-            # Auto-refresh
-            auto_refresh = st.checkbox(
-                "Auto-refresh Visualization", 
-                value=st.session_state.auto_refresh,
-                help="Automatically refresh the visualization.",
-                key="auto_refresh_checkbox_main"
-            )
-            if auto_refresh != st.session_state.auto_refresh:
-                st.session_state.auto_refresh = auto_refresh
             
-            # Refresh interval (only show if auto-refresh is enabled)
-            if auto_refresh:
-                refresh_interval = st.slider(
-                    "Refresh Interval (sec)", 
-                    min_value=0.1, 
-                    max_value=5.0, 
-                    value=float(st.session_state.refresh_interval),
-                    step=0.1,
-                    help="Time between visualization refreshes.",
-                    key="refresh_interval_slider_main"
+            # Visualization options
+            st.subheader("Visualization Options")
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                # Visualization mode
+                viz_mode = st.radio(
+                    "Visualization Mode",
+                    options=["3d", "2d"],
+                    index=0 if st.session_state.viz_mode == "3d" else 1,
+                    horizontal=True,
+                    help="Choose between 2D and 3D visualization.",
+                    key="viz_mode_radio_main"
                 )
-                if refresh_interval != st.session_state.refresh_interval:
-                    st.session_state.refresh_interval = float(refresh_interval)
-        
-        # Firing visualization options
-        st.subheader("Firing Visualization")
-        col5, col6 = st.columns(2)
-        
-        with col5:
-            # Show firing particles
-            show_particles = st.checkbox(
-                "Show Firing Particles", 
-                value=True,
-                help="Show particles when nodes fire.",
-                key="show_particles_checkbox"
-            )
+                if viz_mode != st.session_state.viz_mode:
+                    st.session_state.viz_mode = viz_mode
+                    if st.session_state.simulator:
+                        st.session_state.simulator.cached_viz_mode = viz_mode
             
-            # Particle size
-            particle_size = st.slider(
-                "Particle Size", 
-                min_value=0.1, 
-                max_value=2.0, 
-                value=1.0,
-                step=0.1,
-                help="Size of firing particles.",
-                key="particle_size_slider"
-            )
-        
-        with col6:
-            # Firing color options
-            firing_color_preset = st.selectbox(
-                "Firing Color Preset",
-                options=["Default", "Rainbow", "Fire", "Electric", "Cool"],
-                index=0,
-                help="Choose a color preset for firing effects.",
-                key="firing_color_preset_select"
-            )
-            
-            # Firing animation duration
-            animation_duration = st.slider(
-                "Animation Duration", 
-                min_value=5, 
-                max_value=30, 
-                value=10,
-                step=1,
-                help="Duration of firing animation in frames.",
-                key="animation_duration_slider"
-            )
-        
-        # Apply firing visualization settings
-        if st.session_state.simulator and st.session_state.simulator.network:
-            # Apply particle settings
-            for node in st.session_state.simulator.network.nodes:
-                if hasattr(node, 'firing_animation_duration'):
-                    node.firing_animation_duration = animation_duration
+            with col4:
+                # Auto-refresh
+                auto_refresh = st.checkbox(
+                    "Auto-refresh Visualization", 
+                    value=st.session_state.auto_refresh,
+                    help="Automatically refresh the visualization.",
+                    key="auto_refresh_checkbox_main"
+                )
+                if auto_refresh != st.session_state.auto_refresh:
+                    st.session_state.auto_refresh = auto_refresh
                 
-                # Apply color preset
-                if firing_color_preset != "Default" and hasattr(node, 'firing_color'):
-                    if firing_color_preset == "Rainbow":
-                        # Assign a unique color from the rainbow spectrum based on node ID
-                        hue = (node.id * 137.5) % 360  # Golden angle to distribute colors
-                        node.firing_color = f"hsl({hue}, 100%, 50%)"
-                    elif firing_color_preset == "Fire":
-                        node.firing_color = "#FF4500"  # Orange-red
-                    elif firing_color_preset == "Electric":
-                        node.firing_color = "#00FFFF"  # Cyan
-                    elif firing_color_preset == "Cool":
-                        node.firing_color = "#9370DB"  # Medium purple
-        
-        # Display the visualization
-        st.subheader("Neural Network Visualization")
-        
-        # Create a placeholder for the visualization with a unique key
-        viz_placeholder = st.empty()
-        
-        # Get the current time for a unique key
-        current_time = time.time()
-        
-        # Display the visualization with a unique key
-        if st.session_state.simulator and hasattr(st.session_state.simulator, 'renderer'):
-            # Get the latest visualization
-            fig = st.session_state.simulator.renderer.get_latest_visualization()
-            if fig:
-                # Display with a unique key to prevent conflicts
-                viz_placeholder.plotly_chart(fig, use_container_width=True, key=f"{st.session_state.viz_mode}_viz_{int(current_time)}")
-            else:
-                viz_placeholder.info("Visualization not available yet. Please wait...")
-        
-        # Display simulation statistics
-        if st.session_state.simulator and st.session_state.simulator.network:
-            st.subheader("Simulation Statistics")
+                # Refresh interval (only show if auto-refresh is enabled)
+                if auto_refresh:
+                    refresh_interval = st.slider(
+                        "Refresh Interval (sec)", 
+                        min_value=0.1, 
+                        max_value=5.0, 
+                        value=float(st.session_state.refresh_interval),
+                        step=0.1,
+                        help="Time between visualization refreshes.",
+                        key="refresh_interval_slider_main"
+                    )
+                    if refresh_interval != st.session_state.refresh_interval:
+                        st.session_state.refresh_interval = float(refresh_interval)
             
-            # Create columns for statistics
-            stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+            # Firing visualization options
+            st.subheader("Firing Visualization")
+            col5, col6 = st.columns(2)
             
-            with stat_col1:
-                st.metric("Total Nodes", len(st.session_state.simulator.network.nodes))
-            
-            with stat_col2:
-                visible_nodes = sum(1 for node in st.session_state.simulator.network.nodes if node.visible)
-                st.metric("Visible Nodes", visible_nodes)
-            
-            with stat_col3:
-                total_connections = sum(len(node.connections) for node in st.session_state.simulator.network.nodes)
-                st.metric("Total Connections", total_connections)
-            
-            with stat_col4:
-                # Count nodes that are currently firing
-                firing_nodes = sum(1 for node in st.session_state.simulator.network.nodes 
-                                  if hasattr(node, 'is_firing') and node.is_firing)
-                st.metric("Firing Nodes", firing_nodes)
-        
-        # Auto-refresh mechanism
-        if auto_refresh:
-            # Store the current time in session state for comparison
-            if 'last_refresh_time' not in st.session_state:
-                st.session_state.last_refresh_time = time.time()
-            
-            # Check if enough time has passed since the last refresh
-            current_time = time.time()
-            if current_time - st.session_state.last_refresh_time > st.session_state.refresh_interval:
-                # Update the last refresh time
-                st.session_state.last_refresh_time = current_time
+            with col5:
+                # Show firing particles
+                show_particles = st.checkbox(
+                    "Show Firing Particles", 
+                    value=True,
+                    help="Show particles when nodes fire.",
+                    key="show_particles_checkbox"
+                )
                 
-                # Force a rerun of the app
-                time.sleep(0.1)  # Small delay to prevent excessive refreshes
-                st.rerun()
+                # Particle size
+                particle_size = st.slider(
+                    "Particle Size", 
+                    min_value=0.1, 
+                    max_value=2.0, 
+                    value=1.0,
+                    step=0.1,
+                    help="Size of firing particles.",
+                    key="particle_size_slider"
+                )
+            
+            with col6:
+                # Firing color options
+                firing_color_preset = st.selectbox(
+                    "Firing Color Preset",
+                    options=["Default", "Rainbow", "Fire", "Electric", "Cool"],
+                    index=0,
+                    help="Choose a color preset for firing effects.",
+                    key="firing_color_preset_select"
+                )
+                
+                # Firing animation duration
+                animation_duration = st.slider(
+                    "Animation Duration", 
+                    min_value=5, 
+                    max_value=30, 
+                    value=10,
+                    step=1,
+                    help="Duration of firing animation in frames.",
+                    key="animation_duration_slider"
+                )
+            
+            # Apply firing visualization settings
+            if st.session_state.simulator and st.session_state.simulator.network:
+                # Apply particle settings
+                for node in st.session_state.simulator.network.nodes:
+                    if hasattr(node, 'firing_animation_duration'):
+                        node.firing_animation_duration = animation_duration
+                    
+                    # Apply color preset
+                    if firing_color_preset != "Default" and hasattr(node, 'firing_color'):
+                        if firing_color_preset == "Rainbow":
+                            # Assign a unique color from the rainbow spectrum based on node ID
+                            hue = (node.id * 137.5) % 360  # Golden angle to distribute colors
+                            node.firing_color = f"hsl({hue}, 100%, 50%)"
+                        elif firing_color_preset == "Fire":
+                            node.firing_color = "#FF4500"  # Orange-red
+                        elif firing_color_preset == "Electric":
+                            node.firing_color = "#00FFFF"  # Cyan
+                        elif firing_color_preset == "Cool":
+                            node.firing_color = "#9370DB"  # Medium purple
+            
+            # Auto-refresh mechanism
+            if auto_refresh:
+                # Store the current time in session state for comparison
+                if 'last_refresh_time' not in st.session_state:
+                    st.session_state.last_refresh_time = time.time()
+                
+                # Check if enough time has passed since the last refresh
+                current_time = time.time()
+                if current_time - st.session_state.last_refresh_time > st.session_state.refresh_interval:
+                    # Update the last refresh time
+                    st.session_state.last_refresh_time = current_time
+                    
+                    # Force a rerun of the app
+                    time.sleep(0.1)  # Small delay to prevent excessive refreshes
+                    st.rerun()
     
     except Exception as e:
         st.error(f"Error in simulation interface: {str(e)}")
@@ -563,76 +634,238 @@ def _display_simulation_interface():
 def _display_analysis_interface():
     """Display the analysis interface."""
     try:
-        # Check if simulator exists
-        if st.session_state.simulator is None:
-            st.warning("Simulator not initialized. Please start the simulation first.")
+        if 'simulator' not in st.session_state or not st.session_state.simulator:
+            st.warning("Please start a simulation first.")
             return
         
-        st.header("Network Analysis")
-        
         # Create tabs for different analysis views
-        analysis_tabs = st.tabs(["Statistics", "Patterns", "Metrics", "Heatmap"])
+        tabs = st.tabs(["Network Stats", "Energy Analysis", "Connection Analysis", "Energy Transfer", "Drought History"])
         
-        with analysis_tabs[0]:  # Statistics
+        with tabs[0]:
+            # Network statistics
             st.subheader("Network Statistics")
             
-            # Display basic statistics
-            stats = st.session_state.simulator.get_latest_results()
-            if stats:
-                # Create columns for stats
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.metric("Total Nodes", stats['nodes'])
-                    st.metric("Visible Nodes", stats['visible_nodes'])
-                    st.metric("Connections", stats['connections'])
-                
-                with col2:
-                    st.metric("Active Nodes", stats['active_nodes'])
-                    st.metric("Explosion Particles", stats['explosion_particles'])
-                    
-                    # Calculate connection density
-                    if stats['nodes'] > 1:
-                        max_possible_connections = stats['nodes'] * (stats['nodes'] - 1)
-                        density = stats['connections'] / max_possible_connections if max_possible_connections > 0 else 0
-                        st.metric("Connection Density", f"{density:.2%}")
-            
-            # Add a placeholder for a statistics chart
-            st.subheader("Activity Over Time")
+            # Display network statistics
             st.info("Statistics charts will be displayed here as data is collected.")
         
-        with analysis_tabs[1]:  # Patterns
-            st.subheader("Firing Patterns")
-            st.info("Pattern detection will be displayed here when patterns are detected.")
+        with tabs[1]:
+            # Energy analysis
+            st.subheader("Energy Distribution")
             
-            # Add a button to force pattern detection
-            if st.button("Detect Patterns"):
-                st.info("Pattern detection initiated...")
+            # Calculate energy statistics if simulator exists
+            if st.session_state.simulator and st.session_state.simulator.network:
+                nodes = st.session_state.simulator.network.nodes
+                if nodes:
+                    energies = [getattr(node, 'energy', 0) for node in nodes if node.visible]
+                    if energies:
+                        avg_energy = sum(energies) / len(energies)
+                        max_energy = max(energies)
+                        min_energy = min(energies)
+                        
+                        # Display energy metrics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Average Energy", f"{avg_energy:.1f}")
+                        with col2:
+                            st.metric("Max Energy", f"{max_energy:.1f}")
+                        with col3:
+                            st.metric("Min Energy", f"{min_energy:.1f}")
+                        
+                        # Create energy histogram
+                        fig = go.Figure()
+                        fig.add_trace(go.Histogram(
+                            x=energies,
+                            nbinsx=20,
+                            marker_color='blue',
+                            opacity=0.7
+                        ))
+                        fig.update_layout(
+                            title="Energy Distribution",
+                            xaxis_title="Energy Level",
+                            yaxis_title="Number of Nodes",
+                            height=400
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("No energy data available yet.")
+                else:
+                    st.info("No nodes in the network yet.")
+            else:
+                st.info("Energy distribution analysis will be displayed here.")
         
-        with analysis_tabs[2]:  # Metrics
-            st.subheader("Network Metrics")
+        with tabs[2]:
+            # Connection analysis
+            st.subheader("Connection Strength Analysis")
+            st.info("Connection strength analysis will be displayed here.")
             
-            # Display network metrics
-            st.info("Network metrics will be displayed here.")
-            
-            # Add placeholder for metrics
-            metrics = {
-                "Clustering Coefficient": 0.0,
-                "Average Path Length": 0.0,
-                "Modularity": 0.0,
-                "Small-worldness": 0.0
+            # Add placeholder for connection analysis
+            connection_analysis = {
+                "Average Connection Strength": 0.0,
+                "Max Connection Strength": 0.0,
+                "Min Connection Strength": 0.0
             }
             
-            # Display metrics in a dataframe
-            st.dataframe(metrics)
+            # Display connection analysis in a dataframe
+            st.dataframe(connection_analysis)
         
-        with analysis_tabs[3]:  # Heatmap
-            st.subheader("Activity Heatmap")
-            st.info("Activity heatmap will be displayed here.")
-    
+        with tabs[3]:
+            # Energy transfer analysis
+            st.subheader("Energy Transfer Analysis")
+            
+            # Display energy transfer settings
+            st.markdown("### Energy Transfer Settings")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                # Energy transfer threshold slider
+                transfer_threshold = st.slider(
+                    "Energy Transfer Threshold", 
+                    min_value=10.0, 
+                    max_value=90.0, 
+                    value=50.0,
+                    step=5.0,
+                    help="Energy level below which nodes will request energy from connected nodes.",
+                    key="energy_transfer_threshold_slider"
+                )
+                
+                # Energy transfer efficiency slider
+                transfer_efficiency = st.slider(
+                    "Energy Transfer Efficiency", 
+                    min_value=0.1, 
+                    max_value=1.0, 
+                    value=0.9,
+                    step=0.1,
+                    help="Percentage of energy that is successfully transferred (rest is lost).",
+                    key="energy_transfer_efficiency_slider"
+                )
+            
+            with col2:
+                # Energy surplus threshold slider
+                surplus_threshold = st.slider(
+                    "Energy Surplus Threshold", 
+                    min_value=10.0, 
+                    max_value=90.0, 
+                    value=70.0,
+                    step=5.0,
+                    help="Energy level above which nodes can share energy with others.",
+                    key="energy_surplus_threshold_slider"
+                )
+                
+                # Apply settings button
+                if st.button("Apply Energy Settings", key="apply_energy_settings_button"):
+                    if st.session_state.simulator and st.session_state.simulator.network:
+                        # Update energy transfer settings for all nodes
+                        for node in st.session_state.simulator.network.nodes:
+                            if hasattr(node, 'energy_transfer_threshold'):
+                                node.energy_transfer_threshold = transfer_threshold
+                            if hasattr(node, 'energy_surplus_threshold'):
+                                node.energy_surplus_threshold = surplus_threshold
+                        
+                        # Update global energy transfer efficiency
+                        st.session_state.energy_transfer_efficiency = transfer_efficiency
+                        
+                        st.success("Energy transfer settings applied!")
+            
+            # Display energy transfer visualization
+            st.markdown("### Energy Flow Visualization")
+            
+            # Create a network graph showing energy flow
+            if st.session_state.simulator and st.session_state.simulator.network:
+                nodes = st.session_state.simulator.network.nodes
+                if nodes:
+                    # Create node data
+                    node_data = []
+                    for node in nodes:
+                        if node.visible:
+                            # Calculate color based on energy level
+                            energy = getattr(node, 'energy', 50)
+                            # Red for low energy, yellow for medium, green for high
+                            if energy < 30:
+                                color = 'red'
+                            elif energy < 70:
+                                color = 'orange'
+                            else:
+                                color = 'green'
+                            
+                            node_data.append({
+                                'id': node.id,
+                                'label': f"Node {node.id}",
+                                'color': color,
+                                'size': 10 + (energy / 10),  # Size based on energy
+                                'energy': energy
+                            })
+                    
+                    # Create edge data showing energy transfers
+                    edge_data = []
+                    for node in nodes:
+                        if node.visible and hasattr(node, 'connections'):
+                            for target_id, connection in node.connections.items():
+                                target_node = next((n for n in nodes if n.id == target_id and n.visible), None)
+                                if target_node:
+                                    # Determine if energy transfer is happening
+                                    source_energy = getattr(node, 'energy', 50)
+                                    target_energy = getattr(target_node, 'energy', 50)
+                                    
+                                    # Energy flows from high to low
+                                    if source_energy > getattr(node, 'energy_surplus_threshold', 70) and target_energy < getattr(target_node, 'energy_transfer_threshold', 30):
+                                        color = 'blue'  # Energy is flowing
+                                        width = 2
+                                    else:
+                                        color = 'gray'  # No energy flow
+                                        width = 1
+                                    
+                                    edge_data.append({
+                                        'from': node.id,
+                                        'to': target_id,
+                                        'color': color,
+                                        'width': width,
+                                        'strength': connection.get('strength', 0.5)
+                                    })
+                    
+                    # Create a placeholder for the network visualization
+                    st.info("Energy transfer visualization will be displayed here when implemented.")
+                else:
+                    st.info("No nodes in the network yet.")
+            else:
+                st.info("Energy transfer visualization will be displayed here.")
+        
+        with tabs[4]:
+            # Drought history
+            st.subheader("Drought History")
+            if hasattr(st.session_state.simulator, 'drought_history') and st.session_state.simulator.drought_history:
+                drought_data = pd.DataFrame(st.session_state.simulator.drought_history)
+                st.dataframe(drought_data)
+                
+                # Create a timeline visualization of droughts
+                if len(drought_data) > 0:
+                    fig = go.Figure()
+                    
+                    for i, drought in enumerate(st.session_state.simulator.drought_history):
+                        start = drought['start_step']
+                        end = start + drought['duration']
+                        
+                        fig.add_trace(go.Scatter(
+                            x=[start, end],
+                            y=[i, i],
+                            mode='lines',
+                            line=dict(color='red', width=10),
+                            name=f"Drought {i+1}"
+                        ))
+                    
+                    fig.update_layout(
+                        title="Drought Timeline",
+                        xaxis_title="Simulation Step",
+                        yaxis_title="Drought Event",
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No drought events have occurred yet.")
     except Exception as e:
-        st.error(f"Error displaying analysis interface: {str(e)}")
-        traceback.print_exc()
+        st.error(f"Error in analysis interface: {str(e)}")
+        logger.error(f"Error in analysis interface: {str(e)}")
+        logger.error(traceback.format_exc())
 
 def _display_export_interface():
     """Display the export interface."""
