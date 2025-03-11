@@ -777,29 +777,47 @@ class NeuralNetwork:
 
     def visualize(self, mode='3d'):
         """Create a visualization of the network."""
-        # Filter visible nodes
-        visible_nodes = [node for node in self.nodes if node.visible]
-        
-        # Print detailed debug information
-        print(f"Total nodes: {len(self.nodes)}, Visible nodes: {len(visible_nodes)}")
-        for i, node in enumerate(self.nodes):
-            print(f"Node {i}: ID={node.id}, Type={node.type}, Visible={node.visible}, Position={node.position}, Connections={len(node.connections)}")
-        
-        # If no visible nodes, return empty figure
-        if not visible_nodes:
+        try:
+            # Filter visible nodes
+            visible_nodes = [node for node in self.nodes if node.visible]
+            
+            # Print detailed debug information
+            print(f"Visualizing network: Total nodes: {len(self.nodes)}, Visible nodes: {len(visible_nodes)}")
+            
+            # If no visible nodes, return empty figure
+            if not visible_nodes:
+                fig = go.Figure()
+                fig.update_layout(
+                    title="Neural Network (No visible nodes)",
+                    width=800,
+                    height=600
+                )
+                return fig
+            
+            # Create visualization based on mode
+            if mode == '3d':
+                return self._create_3d_visualization(visible_nodes)
+            else:
+                return self._create_2d_visualization(visible_nodes)
+        except Exception as e:
+            print(f"Error in visualize method: {str(e)}")
+            traceback.print_exc()
+            
+            # Return a simple error figure
             fig = go.Figure()
+            fig.add_annotation(
+                text=f"Visualization Error: {str(e)}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False,
+                font=dict(size=20)
+            )
             fig.update_layout(
-                title="Neural Network (No visible nodes)",
                 width=800,
-                height=600
+                height=600,
+                margin=dict(l=0, r=0, t=0, b=0)
             )
             return fig
-        
-        # Create visualization based on mode
-        if mode == '3d':
-            return self._create_3d_visualization(visible_nodes)
-        else:
-            return self._create_2d_visualization(visible_nodes)
 
     def _create_3d_visualization(self, visible_nodes):
         """Create a 3D visualization of the network."""
@@ -940,6 +958,9 @@ class BackgroundRenderer:
         self.latest_visualization = None
         self.last_render_time = time.time()
         self.render_interval = 0.1  # Minimum time between renders
+        
+        # Create a default empty visualization
+        self._create_empty_visualization("Initializing visualization...")
 
     def start(self):
         """Start the rendering thread."""
@@ -948,20 +969,42 @@ class BackgroundRenderer:
             self.render_thread = threading.Thread(target=self._render_loop)
             self.render_thread.daemon = True
             self.render_thread.start()
+            print("Background renderer started")
 
     def stop(self):
         """Stop the rendering thread."""
         self.running = False
         if self.render_thread:
             self.render_thread.join(timeout=1.0)
+            print("Background renderer stopped")
 
     def request_render(self, mode='3d'):
         """Request a new render with the given mode."""
+        print(f"Render requested with mode: {mode}")
         self.render_queue.put(mode)
 
     def get_latest_visualization(self):
         """Get the most recent visualization."""
+        if self.latest_visualization is None:
+            self._create_empty_visualization("No visualization available yet")
         return self.latest_visualization
+    
+    def _create_empty_visualization(self, message="No data available"):
+        """Create an empty visualization with a message."""
+        fig = go.Figure()
+        fig.add_annotation(
+            text=message,
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            showarrow=False,
+            font=dict(size=20)
+        )
+        fig.update_layout(
+            width=800,
+            height=600,
+            margin=dict(l=0, r=0, t=0, b=0)
+        )
+        self.latest_visualization = fig
 
     def _render_loop(self):
         """Main rendering loop that processes render requests."""
@@ -970,7 +1013,7 @@ class BackgroundRenderer:
                 # Get next render request with timeout
                 try:
                     mode = self.render_queue.get(timeout=0.1)
-                    print(f"Render request received: mode={mode}")
+                    print(f"Processing render request: mode={mode}")
                 except queue.Empty:
                     # No render request, just wait a bit
                     time.sleep(0.05)
@@ -985,6 +1028,7 @@ class BackgroundRenderer:
                 # Check if we have a network and nodes to render
                 if not self.simulator or not self.simulator.network or not self.simulator.network.nodes:
                     print("No simulator, network, or nodes to render")
+                    self._create_empty_visualization("No network data available")
                     time.sleep(0.1)
                     continue
 
@@ -993,27 +1037,33 @@ class BackgroundRenderer:
                 visible_nodes = [node for node in self.simulator.network.nodes if node.visible]
                 print(f"Visible nodes: {len(visible_nodes)}")
                 
+                if not visible_nodes:
+                    print("No visible nodes to render")
+                    self._create_empty_visualization("No visible nodes")
+                    self.last_render_time = current_time
+                    continue
+                
                 # Create visualization based on mode
                 try:
                     # Check if the network has a visualize method
                     if hasattr(self.simulator.network, 'visualize'):
                         if mode == '3d':
-                            self.latest_visualization = self.simulator.network.visualize(mode='3d')
+                            new_viz = self.simulator.network.visualize(mode='3d')
                             print("3D visualization created")
                         else:
-                            self.latest_visualization = self.simulator.network.visualize(mode='2d')
+                            new_viz = self.simulator.network.visualize(mode='2d')
                             print("2D visualization created")
+                        
+                        # Only update if we got a valid visualization
+                        if new_viz is not None:
+                            self.latest_visualization = new_viz
+                            print("Visualization updated")
+                        else:
+                            print("Visualization method returned None")
                     else:
                         # Create a fallback visualization if visualize method is missing
                         print("Visualization method not available")
-                        fig = go.Figure()
-                        fig.add_annotation(
-                            text="Visualization method not available",
-                            xref="paper", yref="paper",
-                            x=0.5, y=0.5,
-                            showarrow=False
-                        )
-                        self.latest_visualization = fig
+                        self._create_empty_visualization("Visualization method not available")
                     
                     self.last_render_time = current_time
                     
@@ -1026,14 +1076,7 @@ class BackgroundRenderer:
                     traceback.print_exc()
                     
                     # Create a simple error visualization
-                    fig = go.Figure()
-                    fig.add_annotation(
-                        text=f"Visualization Error: {str(e)}",
-                        xref="paper", yref="paper",
-                        x=0.5, y=0.5,
-                        showarrow=False
-                    )
-                    self.latest_visualization = fig
+                    self._create_empty_visualization(f"Visualization Error: {str(e)}")
                     time.sleep(0.1)  # Longer delay on error
 
                 # Small delay to prevent excessive CPU usage
@@ -1121,6 +1164,8 @@ class NetworkSimulator:
             last_render_time = time.time()
             render_interval = 0.1  # Minimum time between render requests
             
+            print(f"Simulation started with {len(self.network.nodes)} nodes")
+            
             while self.running:
                 current_time = time.time()
                 elapsed = current_time - last_time
@@ -1164,6 +1209,11 @@ class NetworkSimulator:
                     # Update explosion particles
                     self._update_explosion_particles()
                     
+                    # Print debug info occasionally
+                    if self.step_count % 10 == 0:
+                        visible_nodes = sum(1 for node in self.network.nodes if node.visible)
+                        print(f"Step {self.step_count}: {len(self.network.nodes)} nodes, {visible_nodes} visible")
+                    
                     # Request a render periodically
                     if current_time - last_render_time >= render_interval:
                         try:
@@ -1179,10 +1229,12 @@ class NetworkSimulator:
                                 pass
                             
                             # Request render
+                            print(f"Requesting render at step {self.step_count}")
                             self.renderer.request_render(mode=viz_mode)
                             last_render_time = current_time
                         except Exception as e:
                             print(f"Error requesting render: {str(e)}")
+                            traceback.print_exc()
                 
                 # Small delay to prevent CPU hogging
                 time.sleep(0.01)

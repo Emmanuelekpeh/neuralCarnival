@@ -290,14 +290,36 @@ def _display_simulation_interface():
             # Display visualization
             st.subheader("Neural Network Visualization")
             
+            # Create a placeholder for the visualization
+            viz_placeholder = st.empty()
+            
             # Get the latest visualization
             if st.session_state.simulator:
+                # Force a render request to ensure we have the latest visualization
+                try:
+                    st.session_state.simulator.renderer.request_render(mode=st.session_state.viz_mode)
+                    # Small delay to allow rendering to complete
+                    time.sleep(0.1)
+                except Exception as e:
+                    logger.error(f"Error requesting render: {str(e)}")
+                
+                # Get the visualization after the render request
                 viz_fig = st.session_state.simulator.renderer.get_latest_visualization()
+                
                 if viz_fig:
                     # Use a unique key for each refresh to force re-rendering
-                    st.plotly_chart(viz_fig, use_container_width=True, key=f"viz_{refresh_key}")
+                    viz_placeholder.plotly_chart(viz_fig, use_container_width=True, key=f"viz_{refresh_key}")
+                    
+                    # Debug information
+                    st.write(f"Network has {len(st.session_state.simulator.network.nodes)} nodes, {sum(1 for node in st.session_state.simulator.network.nodes if node.visible)} visible")
                 else:
-                    st.info("Visualization loading...")
+                    viz_placeholder.info("Visualization not available. Waiting for renderer...")
+                    
+                    # Debug information
+                    if hasattr(st.session_state.simulator, 'renderer'):
+                        st.write("Renderer exists but no visualization available")
+                    else:
+                        st.write("Renderer not initialized")
             
             # Display simulation statistics
             if st.session_state.simulator and st.session_state.simulator.network:
