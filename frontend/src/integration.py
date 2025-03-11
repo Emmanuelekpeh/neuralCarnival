@@ -1149,12 +1149,15 @@ def _display_export_interface():
 def _display_settings_interface():
     """Display the settings interface."""
     try:
-        st.header("Settings")
+        if 'simulator' not in st.session_state or not st.session_state.simulator:
+            st.warning("Please start a simulation first.")
+            return
         
-        # Create tabs for different settings categories
-        settings_tabs = st.tabs(["Simulation", "Visualization", "Performance", "Advanced"])
+        # Create tabs for different settings
+        tabs = st.tabs(["Simulation Settings", "Energy Settings", "Drought Settings", "Visual Settings"])
         
-        with settings_tabs[0]:  # Simulation Settings
+        with tabs[0]:
+            # Simulation settings
             st.subheader("Simulation Settings")
             
             # Simulation speed
@@ -1197,27 +1200,147 @@ def _display_settings_interface():
             if max_nodes != st.session_state.max_nodes:
                 st.session_state.max_nodes = max_nodes
                 if st.session_state.simulator:
-                    st.session_state.simulator.max_nodes = max_nodes
-            
-            # Warning if simulator is not initialized
-            if not st.session_state.simulator:
-                st.warning("Simulator not initialized. Settings will be applied when the simulation starts.")
+                    st.session_state.simulator.send_command({
+                        'type': 'set_max_nodes',
+                        'value': max_nodes
+                    })
         
-        with settings_tabs[1]:  # Visualization Settings
+        with tabs[1]:
+            # Energy settings
+            st.subheader("Energy Transfer Settings")
+            
+            # Energy transfer threshold
+            transfer_threshold = st.slider(
+                "Energy Transfer Threshold", 
+                min_value=10.0, 
+                max_value=90.0, 
+                value=30.0,
+                step=5.0,
+                help="Energy level below which nodes will request energy from connected nodes.",
+                key="settings_energy_transfer_threshold_slider"
+            )
+            
+            # Energy surplus threshold
+            surplus_threshold = st.slider(
+                "Energy Surplus Threshold", 
+                min_value=10.0, 
+                max_value=90.0, 
+                value=70.0,
+                step=5.0,
+                help="Energy level above which nodes can share energy with others.",
+                key="settings_energy_surplus_threshold_slider"
+            )
+            
+            # Energy transfer efficiency
+            transfer_efficiency = st.slider(
+                "Energy Transfer Efficiency", 
+                min_value=0.1, 
+                max_value=1.0, 
+                value=0.9,
+                step=0.1,
+                help="Percentage of energy that is successfully transferred (rest is lost).",
+                key="settings_energy_transfer_efficiency_slider"
+            )
+            
+            # Apply energy settings button
+            if st.button("Apply Energy Settings", key="settings_apply_energy_button"):
+                if st.session_state.simulator:
+                    st.session_state.simulator.send_command({
+                        'type': 'set_energy_transfer_settings',
+                        'transfer_threshold': transfer_threshold,
+                        'surplus_threshold': surplus_threshold,
+                        'transfer_efficiency': transfer_efficiency
+                    })
+                    st.success("Energy transfer settings applied!")
+            
+            # Energy decay rate
+            energy_decay_rate = st.slider(
+                "Energy Decay Rate",
+                min_value=0.01,
+                max_value=0.5,
+                value=st.session_state.get('energy_decay_rate', 0.05),
+                step=0.01,
+                help="Rate at which nodes lose energy over time.",
+                key="energy_decay_rate_slider"
+            )
+            st.session_state.energy_decay_rate = energy_decay_rate
+        
+        with tabs[2]:
+            # Drought settings
+            st.subheader("Drought Settings")
+            
+            # Drought probability
+            drought_probability = st.slider(
+                "Drought Probability", 
+                min_value=0.0, 
+                max_value=0.01, 
+                value=0.001,
+                step=0.001,
+                format="%.3f",
+                help="Probability of a drought starting each step (0.001 = 0.1%).",
+                key="settings_drought_probability_slider"
+            )
+            
+            # Apply drought probability button
+            if st.button("Apply Drought Probability", key="settings_apply_drought_prob_button"):
+                if st.session_state.simulator:
+                    st.session_state.simulator.send_command({
+                        'type': 'set_drought_probability',
+                        'value': drought_probability
+                    })
+                    st.success(f"Drought probability set to {drought_probability:.3f}")
+            
+            # Manual drought controls
+            st.subheader("Manual Drought Control")
+            
+            # Current drought status
+            if hasattr(st.session_state.simulator, 'is_drought_period'):
+                if st.session_state.simulator.is_drought_period:
+                    remaining_steps = st.session_state.simulator.drought_end_step - st.session_state.simulator.step_count
+                    st.info(f"Drought active - {remaining_steps} steps remaining")
+                    
+                    # End drought button
+                    if st.button("End Drought Now", key="settings_end_drought_button"):
+                        st.session_state.simulator.send_command({
+                            'type': 'end_drought'
+                        })
+                        st.success("Drought period ended manually.")
+                else:
+                    st.info("No drought active")
+                    
+                    # Start drought button
+                    drought_duration = st.number_input(
+                        "Duration (steps)", 
+                        min_value=50, 
+                        max_value=1000, 
+                        value=200,
+                        step=50,
+                        help="How long the drought will last in simulation steps.",
+                        key="settings_drought_duration_input"
+                    )
+                    
+                    if st.button("Start Drought", key="settings_start_drought_button"):
+                        st.session_state.simulator.send_command({
+                            'type': 'start_drought',
+                            'duration': drought_duration
+                        })
+                        st.success(f"Drought started for {drought_duration} steps.")
+        
+        with tabs[3]:
+            # Visual settings
             st.subheader("Visualization Settings")
             
             # Visualization mode
             viz_mode = st.radio(
-                "Default Visualization Mode",
+                "Visualization Mode",
                 options=["3d", "2d"],
                 index=0 if st.session_state.viz_mode == "3d" else 1,
+                horizontal=True,
                 help="Choose between 2D and 3D visualization.",
                 key="settings_viz_mode_radio"
             )
             if viz_mode != st.session_state.viz_mode:
                 st.session_state.viz_mode = viz_mode
-                if st.session_state.simulator:
-                    st.session_state.simulator.cached_viz_mode = viz_mode
             
             # Auto-refresh
             auto_refresh = st.checkbox(
@@ -1231,148 +1354,22 @@ def _display_settings_interface():
             
             # Refresh interval (only show if auto-refresh is enabled)
             if auto_refresh:
-                # Ensure refresh_interval is a float, not a list
-                current_refresh_interval = st.session_state.refresh_interval
-                if isinstance(current_refresh_interval, list):
-                    current_refresh_interval = float(current_refresh_interval[0]) if current_refresh_interval else 0.5
-                
                 refresh_interval = st.slider(
-                    "Refresh Interval (seconds)", 
+                    "Refresh Interval (sec)", 
                     min_value=0.1, 
                     max_value=5.0, 
-                    value=float(current_refresh_interval),
+                    value=float(st.session_state.refresh_interval),
                     step=0.1,
                     help="Time between visualization refreshes.",
                     key="settings_refresh_interval_slider"
                 )
                 if refresh_interval != st.session_state.refresh_interval:
                     st.session_state.refresh_interval = float(refresh_interval)
-        
-        with settings_tabs[2]:  # Performance Settings
-            st.subheader("Performance Settings")
-            
-            # Rendering settings
-            st.markdown("#### Rendering Settings")
-            
-            # Render frequency
-            render_frequency = st.slider(
-                "Render Frequency", 
-                min_value=1, 
-                max_value=20, 
-                value=st.session_state.get('render_frequency', 5),
-                step=1,
-                help="How many simulation steps to process before updating the visualization",
-                key="render_frequency_slider"
-            )
-            st.session_state.render_frequency = render_frequency
-            if st.session_state.simulator:
-                st.session_state.simulator.render_frequency = render_frequency
-            
-            # Buffered rendering
-            buffered_rendering = st.checkbox(
-                "Use Buffered Rendering", 
-                value=st.session_state.get('buffered_rendering', True),
-                help="Smooth out visualization updates by buffering frames",
-                key="buffered_rendering_checkbox"
-            )
-            st.session_state.buffered_rendering = buffered_rendering
-            
-            # Animation settings
-            st.markdown("#### Animation Settings")
-            
-            # Animation enabled
-            animation_enabled = st.checkbox(
-                "Enable Animations", 
-                value=st.session_state.get('animation_enabled', True),
-                help="Enable firing animations and visual effects",
-                key="animation_enabled_checkbox"
-            )
-            st.session_state.animation_enabled = animation_enabled
-            
-            # Show tendrils
-            show_tendrils = st.checkbox(
-                "Show Connection Tendrils", 
-                value=st.session_state.get('show_tendrils', True),
-                help="Show visual connections between nodes when firing",
-                key="show_tendrils_checkbox"
-            )
-            st.session_state.show_tendrils = show_tendrils
-            
-            # Tendril persistence
-            tendril_persistence = st.slider(
-                "Tendril Persistence", 
-                min_value=5, 
-                max_value=50, 
-                value=st.session_state.get('tendril_persistence', 20),
-                step=5,
-                help="How long connection tendrils remain visible",
-                key="tendril_persistence_slider"
-            )
-            st.session_state.tendril_persistence = tendril_persistence
-        
-        with settings_tabs[3]:  # Advanced Settings
-            st.subheader("Advanced Settings")
-            
-            # Learning rate
-            learning_rate = st.slider(
-                "Learning Rate", 
-                min_value=0.01, 
-                max_value=1.0, 
-                value=st.session_state.get('learning_rate', 0.1),
-                step=0.01,
-                help="Rate at which connections strengthen with repeated activations",
-                key="learning_rate_slider"
-            )
-            st.session_state.learning_rate = learning_rate
-            if st.session_state.simulator and st.session_state.simulator.network:
-                st.session_state.simulator.network.learning_rate = learning_rate
-            
-            # Energy decay rate
-            energy_decay_rate = st.slider(
-                "Energy Decay Rate", 
-                min_value=0.01, 
-                max_value=0.5, 
-                value=st.session_state.get('energy_decay_rate', 0.05),
-                step=0.01,
-                help="Rate at which node activation decays over time",
-                key="energy_decay_rate_slider"
-            )
-            st.session_state.energy_decay_rate = energy_decay_rate
-            
-            # Connection threshold
-            connection_threshold = st.slider(
-                "Connection Threshold", 
-                min_value=0.1, 
-                max_value=5.0, 
-                value=st.session_state.get('connection_threshold', 0.5),
-                step=0.1,
-                help="Threshold for forming new connections between nodes",
-                key="connection_threshold_slider"
-            )
-            st.session_state.connection_threshold = connection_threshold
-            
-            # Reset to defaults button
-            if st.button("Reset to Defaults", key="reset_defaults_button"):
-                st.session_state.simulation_speed = 1.0
-                st.session_state.learning_rate = 0.1
-                st.session_state.energy_decay_rate = 0.05
-                st.session_state.connection_threshold = 0.5
-                st.session_state.render_frequency = 5
-                st.session_state.buffered_rendering = True
-                st.session_state.animation_enabled = True
-                st.session_state.show_tendrils = True
-                st.session_state.tendril_persistence = 20
-                st.success("Settings reset to defaults")
-                
-                # Apply to simulator if it exists
-                if st.session_state.simulator:
-                    st.session_state.simulator.steps_per_second = 1.0
-                    if st.session_state.simulator.network:
-                        st.session_state.simulator.network.learning_rate = 0.1
     
     except Exception as e:
-        st.error(f"Error displaying settings interface: {str(e)}")
-        traceback.print_exc()
+        st.error(f"Error in settings interface: {str(e)}")
+        logger.error(f"Error in settings interface: {str(e)}")
+        logger.error(traceback.format_exc())
 
 def _display_help_information():
     """Display help and information about the application."""

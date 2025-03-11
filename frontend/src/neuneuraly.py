@@ -279,13 +279,14 @@ class Node:
             network.send_command({"type": "remove_node", "node_id": self.id})
             return
         
-        # Absorb ambient energy from the environment if not in drought
-        if not network.is_drought_period:
-            nearby_energy_sources = self._detect_nearby_energy(network)
-            for source, distance in nearby_energy_sources:
-                # Closer sources provide more energy
-                energy_gain = source * (1.0 / (distance + 1.0)) * self.energy_absorption_rate
-                self.energy = min(100.0, self.energy + energy_gain)
+        # Absorb ambient energy from the environment
+        # Note: We can't check for drought here since the network doesn't have that attribute
+        # The drought check will be handled at the simulator level
+        nearby_energy_sources = self._detect_nearby_energy(network)
+        for source, distance in nearby_energy_sources:
+            # Closer sources provide more energy
+            energy_gain = source * (1.0 / (distance + 1.0)) * self.energy_absorption_rate
+            self.energy = min(100.0, self.energy + energy_gain)
         
         # Energy transfer through connections
         self._transfer_energy_through_connections(network)
@@ -294,7 +295,8 @@ class Node:
         self.update_position(network)
         
         # Determine if the node should fire
-        time_since_last_fired = network.step_count - self.last_fired
+        time_since_last_fired = network.step_count if hasattr(network, 'step_count') else 0
+        time_since_last_fired = time_since_last_fired - self.last_fired
         firing_probability = self.firing_rate / 100.0
         
         # Adjust firing probability based on energy level
@@ -968,7 +970,7 @@ class NetworkSimulator:
         self.steps_per_second = 1.0
         self.auto_generate_nodes = False
         self.node_generation_rate = (5, 15)  # min, max seconds between node generation
-        self.last_node_generation = 0
+        self.last_node_generation = time.time()  # Initialize with current time
         self.max_nodes = max_nodes
         self.explosion_particles = []
         self.needs_render_flag = True
@@ -1046,6 +1048,22 @@ class NetworkSimulator:
                     if self.auto_generate_nodes:
                         self._auto_generate_nodes(current_time)
                     
+                    # Apply drought effects to the network
+                    # If in drought, reduce energy absorption for all nodes
+                    if self.is_drought_period:
+                        for node in self.network.nodes:
+                            if hasattr(node, 'energy_absorption_rate'):
+                                # Store original rate if not already stored
+                                if not hasattr(node, '_original_absorption_rate'):
+                                    node._original_absorption_rate = node.energy_absorption_rate
+                                # Reduce absorption rate during drought
+                                node.energy_absorption_rate = node._original_absorption_rate * 0.1  # 90% reduction
+                    else:
+                        # Restore original absorption rates when not in drought
+                        for node in self.network.nodes:
+                            if hasattr(node, '_original_absorption_rate'):
+                                node.energy_absorption_rate = node._original_absorption_rate
+                    
                     # Step the network
                     self.network.step()
                     self.step_count += 1
@@ -1071,60 +1089,100 @@ class NetworkSimulator:
             traceback.print_exc()
 
     def _auto_generate_nodes(self, current_time):
-        """Automatically generate new nodes with random timing if enabled."""
-        # Use instance variable instead of accessing session state directly
-        auto_generate = self.auto_generate_nodes
-
-        if not auto_generate:
-            return
-
-        # Check if we've reached the maximum number of nodes
-        if len(self.network.nodes) >= self.max_nodes:
-            return
-
-        # Check if it's time to generate a new node
-        if current_time >= self.next_node_generation_time:
-            # Add a new node
-            node_type = random.choice(list(NODE_TYPES.keys()))
-            self.network.add_node(visible=True, node_type=node_type)
-
-            # Set the next generation time
-            self.next_node_generation_time = current_time + random.uniform(*self.node_generation_interval_range)
-
-            # Log the node generation
-            print(f"Generated new {node_type} node. Total nodes: {len(self.network.nodes)}")
-
-            # Try to connect the new node to existing nodes
-            if len(self.network.nodes) > 1:
-                new_node = self.network.nodes[-1]
-                # Connect to 1-3 random existing nodes
-                num_connections = random.randint(1, min(3, len(self.network.nodes) - 1))
-                for _ in range(num_connections):
-                    # Select a random existing node (excluding the new one)
-                    target_idx = random.randint(0, len(self.network.nodes) - 2)
-                    target_node = self.network.nodes[target_idx]
-                    # Connect in both directions with 50% probability
-                    new_node.connect(target_node)
-                    if random.random() < 0.5:
-                        target_node.connect(new_node)
+        """Auto-generate nodes if enabled."""
+        if self.auto_generate_nodes and len(self.network.nodes) < self.max_nodes:
+            # Check if it's time to generate a new node
+            time_since_last = current_time - self.last_node_generation
+            
+            # Use a default interval if node_generation_rate is not a tuple
+            if isinstance(self.node_generation_rate, tuple) and len(self.node_generation_rate) == 2:
+                min_interval, max_interval = self.node_generation_rate
+            else:
+                # Default values if node_generation_rate is not properly formatted
+                min_interval = 5.0
+                max_interval = 15.0
+            
+            # Generate a node if enough time has passed
+            if time_since_last >= min_interval:
+                # Random chance to generate based on time passed
+                generation_probability = min(1.0, (time_since_last - min_interval) / (max_interval - min_interval))
+                
+                if random.random() < generation_probability:
+                    # Generate a random node type with weighted probabilities
+                    node_types = list(NODE_TYPES.keys())
+                    weights = [1.0] * len(node_types)  # Equal weights by default
+                    
+                    # Adjust weights based on current network composition
+                    if len(self.network.nodes) > 0:
+                        # Count existing node types
+                        type_counts = {}
+                        for node in self.network.nodes:
+                            if node.type not in type_counts:
+                                type_counts[node.type] = 0
+                            type_counts[node.type] += 1
+                        
+                        # Favor underrepresented node types
+                        total_nodes = len(self.network.nodes)
+                        for i, node_type in enumerate(node_types):
+                            count = type_counts.get(node_type, 0)
+                            # Lower weight for common types, higher for rare types
+                            weights[i] = 1.0 - (count / total_nodes) * 0.5
+                    
+                    # Select node type based on weights
+                    node_type = random.choices(node_types, weights=weights)[0]
+                    
+                    # Add the node
+                    new_node = self.network.add_node(node_type=node_type)
+                    
+                    # Connect to existing nodes
+                    if len(self.network.nodes) > 1:
+                        # Connect to 1-3 random existing nodes
+                        num_connections = random.randint(1, min(3, len(self.network.nodes) - 1))
+                        existing_nodes = [n for n in self.network.nodes if n.id != new_node.id]
+                        
+                        for _ in range(num_connections):
+                            if not existing_nodes:
+                                break
+                            
+                            # Select a random existing node
+                            target_node = random.choice(existing_nodes)
+                            existing_nodes.remove(target_node)  # Don't connect to the same node twice
+                            
+                            # Connect in both directions with varying probability
+                            new_node.connect(target_node)
+                            if random.random() < 0.5:  # 50% chance for bidirectional connection
+                                target_node.connect(new_node)
+                    
+                    # Update the last generation time
+                    self.last_node_generation = current_time
+                    
+                    # Log the node generation
+                    print(f"Generated new {node_type} node. Total nodes: {len(self.network.nodes)}")
+                    self.results_queue.put({
+                        'type': 'node_generated',
+                        'node_type': node_type
+                    })
 
     def _process_node_lifetimes(self):
-        """Process node lifetimes and handle node death."""
-        # Update lifetimes for all visible nodes
+        """Process node lifetimes and remove old nodes."""
+        # Initialize node_lifetimes if it doesn't exist
+        if not hasattr(self, 'node_lifetimes'):
+            self.node_lifetimes = {}
+        
+        # Update lifetimes for all nodes
         for node in self.network.nodes:
-            if node.visible:
-                node_id = node.id
-                if node_id not in self.node_lifetimes:
-                    self.node_lifetimes[node_id] = 0
-                self.node_lifetimes[node_id] += 1
-
-                # Check for node death conditions
-                if len(node.connections) == 0 and self.node_lifetimes[node_id] > 100:
-                    # Node has no connections for too long, make it "die"
-                    if random.random() < 0.05:  # 5% chance per step
-                        node.visible = False
-                        self._create_explosion(node)
-                        print(f"Node {node_id} died due to isolation")
+            node_id = node.id
+            
+            # Initialize lifetime counter for new nodes
+            if node_id not in self.node_lifetimes:
+                self.node_lifetimes[node_id] = 0
+            
+            # Increment lifetime counter
+            self.node_lifetimes[node_id] += 1
+            
+            # Check if node should be removed based on lifetime
+            # This is a placeholder for more complex logic
+            # Currently, we're not removing nodes based on lifetime
 
     def _create_explosion(self, node):
         """Create an explosion effect when a node dies."""
@@ -1239,14 +1297,67 @@ class NetworkSimulator:
         elif cmd_type == 'set_generation_rate':
             self.node_generation_rate = cmd.get('value', 0.1)
             return {'success': True}
-
+        
         elif cmd_type == 'set_max_nodes':
             self.max_nodes = cmd.get('value', 200)
             self.network.max_nodes = self.max_nodes
             return {'success': True}
-
+        
+        elif cmd_type == 'start_drought':
+            duration = cmd.get('duration', 200)
+            self.is_drought_period = True
+            self.drought_end_step = self.step_count + duration
+            self.drought_history.append({
+                'start_step': self.step_count,
+                'duration': duration,
+                'manual': True
+            })
+            print(f"Manual drought started at step {self.step_count} for {duration} steps")
+            return {'success': True, 'drought_started': True, 'duration': duration}
+        
+        elif cmd_type == 'end_drought':
+            if self.is_drought_period:
+                self.is_drought_period = False
+                actual_duration = self.drought_end_step - self.step_count
+                print(f"Manual drought ended early at step {self.step_count}")
+                return {'success': True, 'drought_ended': True, 'actual_duration': actual_duration}
+            return {'success': False, 'error': 'No drought in progress'}
+        
+        elif cmd_type == 'set_drought_probability':
+            self.drought_probability = cmd.get('value', 0.001)
+            return {'success': True}
+        
+        elif cmd_type == 'set_energy_transfer_settings':
+            # Update energy transfer settings for all nodes
+            transfer_threshold = cmd.get('transfer_threshold', 30.0)
+            surplus_threshold = cmd.get('surplus_threshold', 70.0)
+            transfer_efficiency = cmd.get('transfer_efficiency', 0.9)
+            
+            for node in self.network.nodes:
+                if hasattr(node, 'energy_transfer_threshold'):
+                    node.energy_transfer_threshold = transfer_threshold
+                if hasattr(node, 'energy_surplus_threshold'):
+                    node.energy_surplus_threshold = surplus_threshold
+                if hasattr(node, 'energy_transfer_rate'):
+                    # Adjust transfer rate based on efficiency
+                    node.energy_transfer_rate = random.uniform(0.5, 2.0) * transfer_efficiency
+            
+            return {'success': True, 'settings_updated': True}
+        
+        elif cmd_type == 'boost_node_energy':
+            # Boost a specific node's energy
+            node_id = cmd.get('node_id')
+            amount = cmd.get('amount', 50.0)
+            
+            for node in self.network.nodes:
+                if node.id == node_id and hasattr(node, 'energy'):
+                    node.energy = min(100.0, node.energy + amount)
+                    return {'success': True, 'node_id': node_id, 'new_energy': node.energy}
+            
+            return {'success': False, 'error': f'Node {node_id} not found or does not have energy attribute'}
+        
         else:
-            return {'success': False, 'error': f'Unknown command: {cmd_type}'}
+            return {'success': False, 'error': f'Unknown command type: {cmd_type}'}
 
     def send_command(self, command):
         """Send a command to the simulator."""
@@ -1283,20 +1394,25 @@ class NetworkSimulator:
                 self.drought_end_step = self.step_count + drought_duration
                 self.drought_history.append({
                     'start_step': self.step_count,
-                    'duration': drought_duration
+                    'duration': drought_duration,
+                    'manual': False
                 })
                 # Notify the UI
+                print(f"Drought started at step {self.step_count} for {drought_duration} steps")
                 self.results_queue.put({
                     'type': 'drought_started',
-                    'duration': drought_duration
+                    'duration': drought_duration,
+                    'start_step': self.step_count
                 })
         # If in drought, check if it should end
         elif self.step_count >= self.drought_end_step:
             self.is_drought_period = False
             # Notify the UI
+            print(f"Drought ended at step {self.step_count}")
             self.results_queue.put({
                 'type': 'drought_ended',
-                'duration': self.drought_end_step - self.step_count
+                'duration': self.drought_end_step - (self.step_count - self.drought_end_step),
+                'end_step': self.step_count
             })
 
     def get_node_by_id(self, node_id):
