@@ -61,15 +61,98 @@ main_placeholder = st.empty()
 
 # Try to import and run the main app components
 try:
-    # Import neural network components directly
+    # Fix the import issue by directly importing from the correct modules
     logger.info("Importing neural network components...")
     
-    # Import the required modules directly - using the correct module names
-    from frontend.src.neuneuraly import NeuralNetwork
-    from frontend.src.network_simulator import NetworkSimulator
-    from frontend.src.continuous_visualization import ContinuousVisualizer
+    # First, try to import the neuneuraly module directly
+    try:
+        # Try different import paths
+        import_paths = [
+            "frontend.src.neuneuraly",
+            "neuneuraly",
+            "src.neuneuraly",
+            os.path.join(frontend_src_dir, "neuneuraly.py")
+        ]
+        
+        neuneuraly_module = None
+        import_error = None
+        
+        for path in import_paths:
+            try:
+                if path.endswith('.py'):
+                    # Load from file path
+                    spec = importlib.util.spec_from_file_location("neuneuraly", path)
+                    neuneuraly_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(neuneuraly_module)
+                    logger.info(f"Successfully imported neuneuraly from file: {path}")
+                    break
+                else:
+                    # Load from module path
+                    neuneuraly_module = importlib.import_module(path)
+                    logger.info(f"Successfully imported neuneuraly from module: {path}")
+                    break
+            except Exception as e:
+                import_error = e
+                logger.warning(f"Failed to import from {path}: {str(e)}")
+                continue
+        
+        if neuneuraly_module is None:
+            raise ImportError(f"Could not import neuneuraly module from any path. Last error: {import_error}")
+        
+        # Get the NeuralNetwork class from the module
+        NeuralNetwork = getattr(neuneuraly_module, "NeuralNetwork")
+        logger.info("Successfully imported NeuralNetwork class")
+        
+        # Now import NetworkSimulator
+        network_simulator_module = None
+        for path in ["frontend.src.network_simulator", "network_simulator", "src.network_simulator"]:
+            try:
+                network_simulator_module = importlib.import_module(path)
+                logger.info(f"Successfully imported network_simulator from: {path}")
+                break
+            except Exception as e:
+                logger.warning(f"Failed to import network_simulator from {path}: {str(e)}")
+                continue
+        
+        if network_simulator_module is None:
+            # Try to load from file
+            path = os.path.join(frontend_src_dir, "network_simulator.py")
+            spec = importlib.util.spec_from_file_location("network_simulator", path)
+            network_simulator_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(network_simulator_module)
+            logger.info(f"Successfully imported network_simulator from file: {path}")
+        
+        NetworkSimulator = getattr(network_simulator_module, "NetworkSimulator")
+        logger.info("Successfully imported NetworkSimulator class")
+        
+        # Finally import ContinuousVisualizer
+        continuous_visualization_module = None
+        for path in ["frontend.src.continuous_visualization", "continuous_visualization", "src.continuous_visualization"]:
+            try:
+                continuous_visualization_module = importlib.import_module(path)
+                logger.info(f"Successfully imported continuous_visualization from: {path}")
+                break
+            except Exception as e:
+                logger.warning(f"Failed to import continuous_visualization from {path}: {str(e)}")
+                continue
+        
+        if continuous_visualization_module is None:
+            # Try to load from file
+            path = os.path.join(frontend_src_dir, "continuous_visualization.py")
+            spec = importlib.util.spec_from_file_location("continuous_visualization", path)
+            continuous_visualization_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(continuous_visualization_module)
+            logger.info(f"Successfully imported continuous_visualization from file: {path}")
+        
+        ContinuousVisualizer = getattr(continuous_visualization_module, "ContinuousVisualizer")
+        logger.info("Successfully imported ContinuousVisualizer class")
+        
+    except Exception as e:
+        logger.error(f"Error importing modules: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise ImportError(f"Failed to import required modules: {str(e)}")
     
-    logger.info("Successfully imported neural network components")
+    logger.info("Successfully imported all neural network components")
     
     # Run our own implementation of the main function
     logger.info("Running Neural Carnival application...")
