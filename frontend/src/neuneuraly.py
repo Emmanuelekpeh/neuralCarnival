@@ -276,8 +276,15 @@ class Node:
         
         # Check for energy depletion
         if self.energy <= 0 and self.visible:
-            network.send_command({"type": "remove_node", "node_id": self.id})
+            # Instead of removing the node, just mark it as invisible
+            self.visible = False
+            # Create an explosion effect
+            if hasattr(network, 'send_command'):
+                network.send_command({"type": "remove_node", "node_id": self.id})
             return
+        
+        # Ensure node remains visible
+        self.visible = True
         
         # Absorb ambient energy from the environment
         # Note: We can't check for drought here since the network doesn't have that attribute
@@ -590,7 +597,13 @@ class Node:
                 target_node = network.get_node_by_id(node_id)
                 if target_node and target_node.energy > target_node.energy_surplus_threshold:
                     # Calculate energy to transfer based on connection strength
-                    connection_strength = connection.get('strength', 0.5)
+                    # Handle both dictionary and float connection formats
+                    if isinstance(connection, dict):
+                        connection_strength = connection.get('strength', 0.5)
+                    else:
+                        # If connection is a float, it's the strength directly
+                        connection_strength = connection if isinstance(connection, (int, float)) else 0.5
+                    
                     energy_to_transfer = min(
                         target_node.energy_transfer_rate * connection_strength,
                         target_node.energy - target_node.energy_surplus_threshold * 0.8
@@ -709,6 +722,13 @@ class NeuralNetwork:
             'avg_size': [],
             'type_distribution': {t: [] for t in NODE_TYPES}
         }
+        
+    def get_node_by_id(self, node_id):
+        """Get a node by its ID."""
+        for node in self.nodes:
+            if node.id == node_id:
+                return node
+        return None
 
     def add_node(self, visible=True, node_type=None):
         """Add a node to the network and return its ID."""
@@ -757,118 +777,156 @@ class NeuralNetwork:
 
     def visualize(self, mode='3d'):
         """Create a visualization of the network."""
+        # Filter visible nodes
+        visible_nodes = [node for node in self.nodes if node.visible]
+        
+        # Print detailed debug information
+        print(f"Total nodes: {len(self.nodes)}, Visible nodes: {len(visible_nodes)}")
+        for i, node in enumerate(self.nodes):
+            print(f"Node {i}: ID={node.id}, Type={node.type}, Visible={node.visible}, Position={node.position}, Connections={len(node.connections)}")
+        
+        # If no visible nodes, return empty figure
+        if not visible_nodes:
+            fig = go.Figure()
+            fig.update_layout(
+                title="Neural Network (No visible nodes)",
+                width=800,
+                height=600
+            )
+            return fig
+        
+        # Create visualization based on mode
+        if mode == '3d':
+            return self._create_3d_visualization(visible_nodes)
+        else:
+            return self._create_2d_visualization(visible_nodes)
+
+    def _create_3d_visualization(self, visible_nodes):
+        """Create a 3D visualization of the network."""
         try:
-            visible_nodes = [n for n in self.nodes if n.visible]
-            if not visible_nodes:
-                fig = go.Figure()
-                fig.add_annotation(
-                    text="No visible nodes",
-                    xref="paper", yref="paper",
-                    x=0.5, y=0.5,
-                    showarrow=False
-                )
-                return fig
-            if mode == '3d':
-                return self._create_3d_visualization(visible_nodes)
-            else:
-                return self._create_2d_visualization(visible_nodes)
+            # Create node traces
+            node_trace = go.Scatter3d(
+                x=[n.position[0] for n in visible_nodes],
+                y=[n.position[1] for n in visible_nodes],
+                z=[n.position[2] for n in visible_nodes],
+                mode='markers',
+                marker=dict(
+                    size=[n.size/5 for n in visible_nodes],
+                    color=[n.get_display_color() if hasattr(n, 'get_display_color') else n.properties['color'] for n in visible_nodes],
+                    opacity=0.8
+                ),
+                text=[f"Node {n.id} ({n.type})<br>Energy: {getattr(n, 'energy', 50):.1f}" for n in visible_nodes],
+                hoverinfo='text'
+            )
+            
+            # Create edge traces
+            edge_x = []
+            edge_y = []
+            edge_z = []
+            
+            for node in visible_nodes:
+                for target_id in node.connections:
+                    target = next((n for n in visible_nodes if n.id == target_id), None)
+                    if target:
+                        edge_x.extend([node.position[0], target.position[0], None])
+                        edge_y.extend([node.position[1], target.position[1], None])
+                        edge_z.extend([node.position[2], target.position[2], None])
+            
+            edge_trace = go.Scatter3d(
+                x=edge_x, y=edge_y, z=edge_z,
+                mode='lines',
+                line=dict(color='#888', width=1),
+                hoverinfo='none'
+            )
+            
+            # Create figure
+            fig = go.Figure(data=[edge_trace, node_trace])
+            
+            # Update layout
+            fig.update_layout(
+                showlegend=False,
+                scene=dict(
+                    xaxis=dict(showticklabels=False, title=''),
+                    yaxis=dict(showticklabels=False, title=''),
+                    zaxis=dict(showticklabels=False, title='')
+                ),
+                margin=dict(l=0, r=0, t=0, b=0)
+            )
+            
+            return fig
         except Exception as e:
-            print(f"Error creating {mode} visualization: {str(e)}")
+            print(f"Error in 3D visualization: {str(e)}")
+            traceback.print_exc()
+            # Return a simple fallback figure
             fig = go.Figure()
             fig.add_annotation(
-                text=f"Error: {str(e)}",
+                text=f"Visualization Error: {str(e)}",
                 xref="paper", yref="paper",
                 x=0.5, y=0.5,
                 showarrow=False
             )
             return fig
 
-    def _create_3d_visualization(self, visible_nodes):
-        """Create a 3D visualization of the network."""
-        # Create node traces
-        node_trace = go.Scatter3d(
-            x=[n.position[0] for n in visible_nodes],
-            y=[n.position[1] for n in visible_nodes],
-            z=[n.position[2] for n in visible_nodes],
-            mode='markers',
-            marker=dict(
-                size=[n.size/5 for n in visible_nodes],
-                color=[n.get_display_color() if hasattr(n, 'get_display_color') else n.properties['color'] for n in visible_nodes],
-                opacity=0.8  # Use a single value for opacity
-            ),
-            text=[f"Node {n.id} ({n.type})<br>Energy: {getattr(n, 'energy', 50):.1f}" for n in visible_nodes],
-            hoverinfo='text'
-        )
-        # Create edge traces
-        edge_x = []
-        edge_y = []
-        edge_z = []
-        for node in visible_nodes:
-            for target_id in node.connections:
-                target = next((n for n in visible_nodes if n.id == target_id), None)
-                if target:
-                    edge_x.extend([node.position[0], target.position[0], None])
-                    edge_y.extend([node.position[1], target.position[1], None])
-                    edge_z.extend([node.position[2], target.position[2], None])
-        edge_trace = go.Scatter3d(
-            x=edge_x, y=edge_y, z=edge_z,
-            mode='lines',
-            line=dict(color='#888', width=1),
-            hoverinfo='none'
-        )
-        # Create figure
-        fig = go.Figure(data=[edge_trace, node_trace])
-        fig.update_layout(
-            showlegend=False,
-            scene=dict(
-                xaxis=dict(showticklabels=False, title=''),
-                yaxis=dict(showticklabels=False, title=''),
-                zaxis=dict(showticklabels=False, title='')
-            ),
-            margin=dict(l=0, r=0, t=0, b=0)
-        )
-        return fig
-
     def _create_2d_visualization(self, visible_nodes):
         """Create a 2D visualization of the network."""
-        # Create node traces
-        node_trace = go.Scatter(
-            x=[n.position[0] for n in visible_nodes],
-            y=[n.position[1] for n in visible_nodes],
-            mode='markers',
-            marker=dict(
-                size=[n.size for n in visible_nodes],
-                color=[n.get_display_color() if hasattr(n, 'get_display_color') else n.properties['color'] for n in visible_nodes],
-                opacity=0.8,  # Use a single value for opacity
-                line=dict(width=2, color='rgba(50, 50, 50, 0.8)')
-            ),
-            text=[f"Node {n.id} ({n.type})<br>Energy: {getattr(n, 'energy', 50):.1f}" for n in visible_nodes],
-            hoverinfo='text'
-        )
-        # Create edge traces
-        edge_x = []
-        edge_y = []
-        for node in visible_nodes:
-            for target_id in node.connections:
-                target = next((n for n in visible_nodes if n.id == target_id), None)
-                if target:
-                    edge_x.extend([node.position[0], target.position[0], None])
-                    edge_y.extend([node.position[1], target.position[1], None])
-        edge_trace = go.Scatter(
-            x=edge_x, y=edge_y,
-            mode='lines',
-            line=dict(color='#888', width=1),
-            hoverinfo='none'
-        )
-        # Create figure
-        fig = go.Figure(data=[edge_trace, node_trace])
-        fig.update_layout(
-            showlegend=False,
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            margin=dict(l=0, r=0, t=0, b=0)
-        )
-        return fig
+        try:
+            # Create node traces
+            node_trace = go.Scatter(
+                x=[n.position[0] for n in visible_nodes],
+                y=[n.position[1] for n in visible_nodes],
+                mode='markers',
+                marker=dict(
+                    size=[n.size for n in visible_nodes],
+                    color=[n.get_display_color() if hasattr(n, 'get_display_color') else n.properties['color'] for n in visible_nodes],
+                    opacity=0.8,
+                    line=dict(width=2, color='rgba(50, 50, 50, 0.8)')
+                ),
+                text=[f"Node {n.id} ({n.type})<br>Energy: {getattr(n, 'energy', 50):.1f}" for n in visible_nodes],
+                hoverinfo='text'
+            )
+            
+            # Create edge traces
+            edge_x = []
+            edge_y = []
+            
+            for node in visible_nodes:
+                for target_id in node.connections:
+                    target = next((n for n in visible_nodes if n.id == target_id), None)
+                    if target:
+                        edge_x.extend([node.position[0], target.position[0], None])
+                        edge_y.extend([node.position[1], target.position[1], None])
+            
+            edge_trace = go.Scatter(
+                x=edge_x, y=edge_y,
+                mode='lines',
+                line=dict(color='#888', width=1),
+                hoverinfo='none'
+            )
+            
+            # Create figure
+            fig = go.Figure(data=[edge_trace, node_trace])
+            
+            # Update layout
+            fig.update_layout(
+                showlegend=False,
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                margin=dict(l=0, r=0, t=0, b=0)
+            )
+            
+            return fig
+        except Exception as e:
+            print(f"Error in 2D visualization: {str(e)}")
+            traceback.print_exc()
+            # Return a simple fallback figure
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Visualization Error: {str(e)}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False
+            )
+            return fig
 
 class BackgroundRenderer:
     """Background renderer for the neural network visualization."""
@@ -910,7 +968,13 @@ class BackgroundRenderer:
         while self.running:
             try:
                 # Get next render request with timeout
-                mode = self.render_queue.get(timeout=0.1)
+                try:
+                    mode = self.render_queue.get(timeout=0.1)
+                    print(f"Render request received: mode={mode}")
+                except queue.Empty:
+                    # No render request, just wait a bit
+                    time.sleep(0.05)
+                    continue
 
                 # Check if enough time has passed since last render
                 current_time = time.time()
@@ -920,19 +984,28 @@ class BackgroundRenderer:
 
                 # Check if we have a network and nodes to render
                 if not self.simulator or not self.simulator.network or not self.simulator.network.nodes:
+                    print("No simulator, network, or nodes to render")
                     time.sleep(0.1)
                     continue
 
+                # Print debug information about the network
+                print(f"Rendering network with {len(self.simulator.network.nodes)} nodes")
+                visible_nodes = [node for node in self.simulator.network.nodes if node.visible]
+                print(f"Visible nodes: {len(visible_nodes)}")
+                
                 # Create visualization based on mode
                 try:
                     # Check if the network has a visualize method
                     if hasattr(self.simulator.network, 'visualize'):
                         if mode == '3d':
                             self.latest_visualization = self.simulator.network.visualize(mode='3d')
+                            print("3D visualization created")
                         else:
                             self.latest_visualization = self.simulator.network.visualize(mode='2d')
+                            print("2D visualization created")
                     else:
                         # Create a fallback visualization if visualize method is missing
+                        print("Visualization method not available")
                         fig = go.Figure()
                         fig.add_annotation(
                             text="Visualization method not available",
@@ -943,17 +1016,31 @@ class BackgroundRenderer:
                         self.latest_visualization = fig
                     
                     self.last_render_time = current_time
+                    
+                    # Mark the simulator as rendered
+                    if hasattr(self.simulator, 'mark_rendered'):
+                        self.simulator.mark_rendered()
+                        
                 except Exception as e:
                     print(f"Error creating {mode} visualization: {str(e)}")
+                    traceback.print_exc()
+                    
+                    # Create a simple error visualization
+                    fig = go.Figure()
+                    fig.add_annotation(
+                        text=f"Visualization Error: {str(e)}",
+                        xref="paper", yref="paper",
+                        x=0.5, y=0.5,
+                        showarrow=False
+                    )
+                    self.latest_visualization = fig
                     time.sleep(0.1)  # Longer delay on error
 
                 # Small delay to prevent excessive CPU usage
                 time.sleep(0.01)
-            except queue.Empty:
-                # No render request, just wait a bit
-                time.sleep(0.05)
             except Exception as e:
                 print(f"Error in render loop: {str(e)}")
+                traceback.print_exc()
                 time.sleep(0.5)  # Longer delay on error
 
 class NetworkSimulator:
@@ -1031,6 +1118,9 @@ class NetworkSimulator:
         """Run the simulation loop."""
         try:
             last_time = time.time()
+            last_render_time = time.time()
+            render_interval = 0.1  # Minimum time between render requests
+            
             while self.running:
                 current_time = time.time()
                 elapsed = current_time - last_time
@@ -1074,16 +1164,28 @@ class NetworkSimulator:
                     # Update explosion particles
                     self._update_explosion_particles()
                     
-                    # Request a render if needed
-                    if self.needs_render_flag:
+                    # Request a render periodically
+                    if current_time - last_render_time >= render_interval:
                         try:
-                            self.renderer.request_render(mode=st.session_state.viz_mode)
-                        except (AttributeError, KeyError):
-                            # Default to 3D if viz_mode not set
-                            self.renderer.request_render(mode='3d')
-                        self.needs_render_flag = False
+                            # Default to 3D visualization
+                            viz_mode = '3d'
+                            
+                            # Try to get viz_mode from session_state if available
+                            try:
+                                import streamlit as st
+                                if hasattr(st, 'session_state') and hasattr(st.session_state, 'viz_mode'):
+                                    viz_mode = st.session_state.viz_mode
+                            except:
+                                pass
+                            
+                            # Request render
+                            self.renderer.request_render(mode=viz_mode)
+                            last_render_time = current_time
+                        except Exception as e:
+                            print(f"Error requesting render: {str(e)}")
                 
-                time.sleep(0.01)  # Prevent CPU hogging
+                # Small delay to prevent CPU hogging
+                time.sleep(0.01)
         except Exception as e:
             print(f"Error in simulation thread: {str(e)}")
             traceback.print_exc()
@@ -1272,13 +1374,16 @@ class NetworkSimulator:
             node_id = cmd.get('node_id')
             for i, node in enumerate(self.network.nodes):
                 if node.id == node_id:
+                    # Instead of removing the node, just mark it as invisible
                     node.visible = False
                     self._create_explosion(node)
                     return {'success': True}
             return {'success': False, 'error': f'Node {node_id} not found'}
 
         elif cmd_type == 'clear':
-            self.network.nodes = []
+            # Instead of removing nodes, mark them all as invisible
+            for node in self.network.nodes:
+                node.visible = False
             self.explosion_particles = []
             self.node_lifetimes = {}
             return {'success': True}

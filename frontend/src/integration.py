@@ -278,6 +278,9 @@ def _display_simulation_interface():
         # Create columns for layout
         col1, col2 = st.columns([3, 1])
         
+        # Generate a unique key for this refresh cycle
+        refresh_key = int(time.time() * 1000)
+        
         with col1:
             # Display drought status if active
             if hasattr(st.session_state.simulator, 'is_drought_period') and st.session_state.simulator.is_drought_period:
@@ -286,15 +289,15 @@ def _display_simulation_interface():
             
             # Display visualization
             st.subheader("Neural Network Visualization")
-            viz_container = st.empty()
             
             # Get the latest visualization
             if st.session_state.simulator:
                 viz_fig = st.session_state.simulator.renderer.get_latest_visualization()
                 if viz_fig:
-                    viz_container.plotly_chart(viz_fig, use_container_width=True)
+                    # Use a unique key for each refresh to force re-rendering
+                    st.plotly_chart(viz_fig, use_container_width=True, key=f"viz_{refresh_key}")
                 else:
-                    viz_container.info("Visualization loading...")
+                    st.info("Visualization loading...")
             
             # Display simulation statistics
             if st.session_state.simulator and st.session_state.simulator.network:
@@ -372,8 +375,9 @@ def _display_simulation_interface():
                     
                     # End drought button
                     if st.button("End Drought Now", key="end_drought_button"):
-                        st.session_state.simulator.is_drought_period = False
-                        st.session_state.simulator.drought_end_step = 0
+                        st.session_state.simulator.send_command({
+                            'type': 'end_drought'
+                        })
                         st.success("Drought period ended manually.")
                 else:
                     st.info("No drought active")
@@ -393,12 +397,9 @@ def _display_simulation_interface():
                     
                     with col_d2:
                         if st.button("Start Drought", key="start_drought_button"):
-                            st.session_state.simulator.is_drought_period = True
-                            st.session_state.simulator.drought_end_step = st.session_state.simulator.step_count + drought_duration
-                            st.session_state.simulator.drought_history.append({
-                                'start_step': st.session_state.simulator.step_count,
-                                'duration': drought_duration,
-                                'manual': True
+                            st.session_state.simulator.send_command({
+                                'type': 'start_drought',
+                                'duration': drought_duration
                             })
                             st.success(f"Drought started for {drought_duration} steps.")
                 
@@ -481,7 +482,7 @@ def _display_simulation_interface():
                     max_interval = min_interval
                 
                 if st.session_state.simulator:
-                    st.session_state.simulator.node_generation_interval_range = (min_interval, max_interval)
+                    st.session_state.simulator.node_generation_rate = (min_interval, max_interval)
                 
                 # Maximum nodes
                 max_nodes = st.slider(
@@ -517,8 +518,6 @@ def _display_simulation_interface():
                 )
                 if viz_mode != st.session_state.viz_mode:
                     st.session_state.viz_mode = viz_mode
-                    if st.session_state.simulator:
-                        st.session_state.simulator.cached_viz_mode = viz_mode
             
             with col4:
                 # Auto-refresh
@@ -536,7 +535,7 @@ def _display_simulation_interface():
                     refresh_interval = st.slider(
                         "Refresh Interval (sec)", 
                         min_value=0.1, 
-                        max_value=5.0, 
+                        max_value=2.0, 
                         value=float(st.session_state.refresh_interval),
                         step=0.1,
                         help="Time between visualization refreshes.",
@@ -544,87 +543,22 @@ def _display_simulation_interface():
                     )
                     if refresh_interval != st.session_state.refresh_interval:
                         st.session_state.refresh_interval = float(refresh_interval)
+        
+        # Auto-refresh mechanism
+        if st.session_state.auto_refresh:
+            # Store the current time in session state for comparison
+            if 'last_refresh_time' not in st.session_state:
+                st.session_state.last_refresh_time = time.time()
             
-            # Firing visualization options
-            st.subheader("Firing Visualization")
-            col5, col6 = st.columns(2)
-            
-            with col5:
-                # Show firing particles
-                show_particles = st.checkbox(
-                    "Show Firing Particles", 
-                    value=True,
-                    help="Show particles when nodes fire.",
-                    key="show_particles_checkbox"
-                )
+            # Check if enough time has passed since the last refresh
+            current_time = time.time()
+            if current_time - st.session_state.last_refresh_time > st.session_state.refresh_interval:
+                # Update the last refresh time
+                st.session_state.last_refresh_time = current_time
                 
-                # Particle size
-                particle_size = st.slider(
-                    "Particle Size", 
-                    min_value=0.1, 
-                    max_value=2.0, 
-                    value=1.0,
-                    step=0.1,
-                    help="Size of firing particles.",
-                    key="particle_size_slider"
-                )
-            
-            with col6:
-                # Firing color options
-                firing_color_preset = st.selectbox(
-                    "Firing Color Preset",
-                    options=["Default", "Rainbow", "Fire", "Electric", "Cool"],
-                    index=0,
-                    help="Choose a color preset for firing effects.",
-                    key="firing_color_preset_select"
-                )
-                
-                # Firing animation duration
-                animation_duration = st.slider(
-                    "Animation Duration", 
-                    min_value=5, 
-                    max_value=30, 
-                    value=10,
-                    step=1,
-                    help="Duration of firing animation in frames.",
-                    key="animation_duration_slider"
-                )
-            
-            # Apply firing visualization settings
-            if st.session_state.simulator and st.session_state.simulator.network:
-                # Apply particle settings
-                for node in st.session_state.simulator.network.nodes:
-                    if hasattr(node, 'firing_animation_duration'):
-                        node.firing_animation_duration = animation_duration
-                    
-                    # Apply color preset
-                    if firing_color_preset != "Default" and hasattr(node, 'firing_color'):
-                        if firing_color_preset == "Rainbow":
-                            # Assign a unique color from the rainbow spectrum based on node ID
-                            hue = (node.id * 137.5) % 360  # Golden angle to distribute colors
-                            node.firing_color = f"hsl({hue}, 100%, 50%)"
-                        elif firing_color_preset == "Fire":
-                            node.firing_color = "#FF4500"  # Orange-red
-                        elif firing_color_preset == "Electric":
-                            node.firing_color = "#00FFFF"  # Cyan
-                        elif firing_color_preset == "Cool":
-                            node.firing_color = "#9370DB"  # Medium purple
-            
-            # Auto-refresh mechanism
-            if auto_refresh:
-                # Store the current time in session state for comparison
-                if 'last_refresh_time' not in st.session_state:
-                    st.session_state.last_refresh_time = time.time()
-                
-                # Check if enough time has passed since the last refresh
-                current_time = time.time()
-                if current_time - st.session_state.last_refresh_time > st.session_state.refresh_interval:
-                    # Update the last refresh time
-                    st.session_state.last_refresh_time = current_time
-                    
-                    # Force a rerun of the app
-                    time.sleep(0.1)  # Small delay to prevent excessive refreshes
-                    st.rerun()
+                # Force a rerun of the app to update the visualization
+                time.sleep(0.05)  # Small delay to prevent excessive refreshes
+                st.rerun()
     
     except Exception as e:
         st.error(f"Error in simulation interface: {str(e)}")
@@ -814,12 +748,19 @@ def _display_analysis_interface():
                                         color = 'gray'  # No energy flow
                                         width = 1
                                     
+                                    # Get connection strength - handle both dictionary and float formats
+                                    if isinstance(connection, dict):
+                                        strength = connection.get('strength', 0.5)
+                                    else:
+                                        # If connection is a float, it's the strength directly
+                                        strength = connection if isinstance(connection, (int, float)) else 0.5
+                                    
                                     edge_data.append({
                                         'from': node.id,
                                         'to': target_id,
                                         'color': color,
                                         'width': width,
-                                        'strength': connection.get('strength', 0.5)
+                                        'strength': strength
                                     })
                     
                     # Create a placeholder for the network visualization
@@ -1357,7 +1298,7 @@ def _display_settings_interface():
                 refresh_interval = st.slider(
                     "Refresh Interval (sec)", 
                     min_value=0.1, 
-                    max_value=5.0, 
+                    max_value=2.0, 
                     value=float(st.session_state.refresh_interval),
                     step=0.1,
                     help="Time between visualization refreshes.",
