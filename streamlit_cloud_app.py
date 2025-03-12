@@ -10,6 +10,9 @@ import streamlit as st
 import traceback
 import importlib.util
 import inspect
+import random
+import threading
+import time
 
 # Configure page settings - must be the first Streamlit command
 st.set_page_config(
@@ -67,163 +70,163 @@ try:
     class CustomNode:
         """A more robust Node class for Streamlit Cloud deployment."""
         
-        def __init__(self, node_id, position=None, visible=True, node_type=None):
-            """Initialize a node with robust error handling.
+        def __init__(self, id=None, position=None, node_type='input', visible=True, energy=1.0):
+            """Initialize a node.
             
             Args:
-                node_id: The ID of the node
-                position: The position of the node [x, y, z]
+                id: Optional node ID (will be set by NeuralNetwork if not provided)
+                position: Optional 3D position tuple (x, y, z)
+                node_type: Type of node ('input', 'hidden', or 'output')
                 visible: Whether the node is visible
-                node_type: The type of the node
+                energy: Initial energy level
             """
-            self.id = node_id
-            
-            # Handle position parameter
-            if position is None:
-                self._position = [0, 0, 0]
-            else:
-                self._position = position.copy() if hasattr(position, 'copy') else list(position)
-                
-            self._velocity = [0, 0, 0]
+            self.id = id
+            self.position = position or (0, 0, 0)
+            self.node_type = node_type
+            self._node_type = node_type  # For compatibility with original code
             self.visible = visible
-            self._node_type = None
-            
-            # Set node type with fallback
-            if node_type is None:
-                self.node_type = 'input'  # Default to input type
-            else:
-                self.node_type = node_type
-            
-            # Set properties with fallback
-            try:
-                if NODE_TYPES and self.node_type in NODE_TYPES:
-                    self.properties = NODE_TYPES[self.node_type].copy()
-                else:
-                    # Create default properties if node_type not in NODE_TYPES
-                    self.properties = {
-                        'color': '#4287f5',  # Blue
-                        'size_range': (40, 150),
-                        'firing_rate': (0.1, 0.3),
-                        'decay_rate': (0.02, 0.05),
-                        'connection_strength': 1.2,
-                        'resurrection_chance': 0.2,
-                        'generation_weight': 1.0
-                    }
-                    logger.warning(f"Node type '{self.node_type}' not found in NODE_TYPES, using default properties")
-            except Exception as e:
-                logger.error(f"Error setting node properties: {str(e)}")
-                # Create default properties
-                self.properties = {
-                    'color': '#4287f5',  # Blue
-                    'size_range': (40, 150),
-                    'firing_rate': (0.1, 0.3),
-                    'decay_rate': (0.02, 0.05),
-                    'connection_strength': 1.2,
-                    'resurrection_chance': 0.2,
-                    'generation_weight': 1.0
-                }
-            
-            # Core attributes
-            self.connections = {}  # Dictionary to store connections with node IDs as keys
-            self.max_connections = 15
-            self.energy = 100.0
-            self.max_energy = 100.0
-            self.age = 0  # Initialize age counter
-            self.last_fired = 0  # Initialize last fired counter
-            self.activated = False  # Initialize activation state
-            self.is_firing = False  # Initialize firing state
-            self.firing_animation_progress = 0.0  # Initialize firing animation progress
-            self.connection_attempts = 0  # Initialize connection attempts counter
-            self.successful_connections = 0  # Initialize successful connections counter
-            self.memory = 0  # Initialize memory
+            self.energy = energy
+            self.connections = []
+            self.properties = {
+                'decay_rate': (0.01, 0.05),
+                'energy_transfer_rate': (0.1, 0.3),
+                'activation_threshold': (0.2, 0.5)
+            }
             
             # Try to get decay rate from properties, with fallback
             try:
-                import random
                 self.decay_rate = random.uniform(*self.properties['decay_rate'])
             except (KeyError, TypeError):
-                self.decay_rate = 0.03  # Default decay rate
+                self.decay_rate = 0.02
+            
+            logger.debug(f"CustomNode initialized with ID {id}, type {node_type}")
     
     # Define a custom NeuralNetwork class that uses our CustomNode
     class CustomNeuralNetwork:
         """A more robust NeuralNetwork class for Streamlit Cloud deployment."""
         
-        def __init__(self, max_nodes=200):
-            """Initialize an empty neural network."""
+        def __init__(self, max_nodes=100):
+            """Initialize the neural network.
+            
+            Args:
+                max_nodes: Maximum number of nodes allowed in the network
+            """
             self.nodes = []
-            self.layers = {'input': [], 'hidden': [], 'output': []}
-            self.simulation_steps = 0
-            self.step_count = 0
+            self.connections = []
             self.max_nodes = max_nodes
             self.next_node_id = 0
-            
-            # Import necessary modules
-            try:
-                import networkx as nx
-                self.graph = nx.Graph()
-            except ImportError:
-                logger.warning("NetworkX not available, graph functionality will be limited")
-                self.graph = None
-                
-            import time
-            self.last_save_time = time.time()
-            self.save_interval = 300  # Save every 5 minutes by default
-            self.start_time = time.time()
-            self.learning_rate = 0.1
-            self.is_drought_period = False
-            self.drought_end_step = 0
-            self.drought_probability = 0.001
-            self.drought_duration_range = (100, 300)
-            self.drought_history = []
+            self.next_connection_id = 0
+            logger.info(f"CustomNeuralNetwork initialized with max_nodes={max_nodes}")
         
-        def add_node(self, position=None, visible=True, node_type=None, layer=None):
+        def add_node(self, position=None, visible=True, node_type='input'):
             """Add a node to the network.
             
             Args:
-                position: The position of the node [x, y, z]
+                position: Optional 3D position tuple (x, y, z)
                 visible: Whether the node is visible
-                node_type: The type of the node
-                layer: The layer to add the node to (input, hidden, output)
+                node_type: Type of node ('input', 'hidden', or 'output')
                 
             Returns:
-                The newly created node
+                The created node
             """
-            logger.info(f"Adding node: visible={visible}, node_type={node_type}, layer={layer}")
-            
-            # Check if we've reached the maximum number of nodes
             if len(self.nodes) >= self.max_nodes:
-                logger.warning(f"Maximum number of nodes reached ({self.max_nodes})")
+                logger.warning(f"Cannot add node: maximum number of nodes ({self.max_nodes}) reached")
                 return None
             
-            # Determine layer if not specified
-            if layer is None:
-                if node_type in ['input', 'hidden', 'output']:
-                    layer = node_type
-                else:
-                    # Assign specialized node types to appropriate layers
-                    import random
-                    layer = random.choice(['input', 'hidden', 'output'])
+            # Create a new node with the specified parameters
+            node = CustomNode(
+                id=self.next_node_id,
+                position=position or (0, 0, 0),
+                visible=visible,
+                node_type=node_type
+            )
             
-            # Generate position based on layer if not provided
-            if position is None:
-                import random
-                base_z = -10 if layer == 'input' else 0 if layer == 'hidden' else 10
-                position = [
-                    random.uniform(-10, 10),
-                    random.uniform(-10, 10),
-                    base_z + random.uniform(-2, 2)
-                ]
-            
-            # Create the node with position using our CustomNode class
-            node = CustomNode(self.next_node_id, position=position, node_type=node_type, visible=visible)
-            
-            # Add to network and layer
             self.nodes.append(node)
-            if layer in self.layers:
-                self.layers[layer].append(node)
-            
             self.next_node_id += 1
+            logger.debug(f"Added {node_type} node with ID {node.id}")
             return node
+        
+        def add_node_object(self, node):
+            """Add an existing node object to the network.
+            
+            Args:
+                node: A CustomNode object to add to the network
+                
+            Returns:
+                The added node if successful, None otherwise
+            """
+            if len(self.nodes) >= self.max_nodes:
+                logger.warning(f"Cannot add node: maximum number of nodes ({self.max_nodes}) reached")
+                return None
+            
+            # Set the ID for the node
+            node.id = self.next_node_id
+            self.next_node_id += 1
+            
+            # Add the node to our list
+            self.nodes.append(node)
+            logger.debug(f"Added existing node object with ID {node.id} and type {getattr(node, 'node_type', 'unknown')}")
+            return node
+        
+        def add_connection(self, source_id, target_id, weight=None):
+            """Add a connection between two nodes.
+            
+            Args:
+                source_id: ID of the source node
+                target_id: ID of the target node
+                weight: Optional connection weight (defaults to random)
+                
+            Returns:
+                The created connection if successful, None otherwise
+            """
+            # Find the source and target nodes
+            source_node = None
+            target_node = None
+            
+            for node in self.nodes:
+                if node.id == source_id:
+                    source_node = node
+                if node.id == target_id:
+                    target_node = node
+                
+            if not source_node or not target_node:
+                logger.warning(f"Cannot create connection: source or target node not found")
+                return None
+            
+            # Create the connection with a random weight if not specified
+            if weight is None:
+                weight = random.uniform(0.1, 1.0)
+            
+            connection = {
+                'id': self.next_connection_id,
+                'source': source_id,
+                'target': target_id,
+                'weight': weight
+            }
+            
+            self.connections.append(connection)
+            self.next_connection_id += 1
+            
+            # Add the connection to the source node's connections list
+            if hasattr(source_node, 'connections'):
+                source_node.connections.append(connection)
+            
+            logger.debug(f"Added connection from node {source_id} to node {target_id} with weight {weight:.2f}")
+            return connection
+        
+        def get_node_by_id(self, node_id):
+            """Get a node by its ID.
+            
+            Args:
+                node_id: The ID of the node to find
+                
+            Returns:
+                The node if found, None otherwise
+            """
+            for node in self.nodes:
+                if node.id == node_id:
+                    return node
+            return None
     
     # First, try to import the neuneuraly module directly
     try:
@@ -402,16 +405,39 @@ try:
             total_energy = 0
             node_types = {}
             for node in st.session_state.network.nodes:
-                node_types[node.node_type] = node_types.get(node.node_type, 0) + 1
-                total_energy += node.energy
+                # Check if node has the node_type attribute
+                node_type = getattr(node, 'node_type', None)
+                if node_type is None:
+                    # Try alternative attribute names that might exist
+                    node_type = getattr(node, '_node_type', None)
+                    if node_type is None:
+                        # If still None, try to get type from the class name
+                        node_type = node.__class__.__name__.lower()
+                
+                # Now use the node_type safely
+                node_types[node_type] = node_types.get(node_type, 0) + 1
+                
+                # Safely get energy
+                energy = getattr(node, 'energy', 0)
+                total_energy += energy
             
             with col2:
                 st.metric("Total Energy", f"{total_energy:.1f}")
             
             # Node type breakdown in an expandable section
             with st.expander("Node Type Breakdown", expanded=True):
-                for ntype, count in node_types.items():
-                    st.write(f"🔹 {ntype.title()}: {count}")
+                try:
+                    if node_types:
+                        for ntype, count in node_types.items():
+                            if ntype:  # Make sure ntype is not None or empty
+                                st.write(f"🔹 {ntype.title()}: {count}")
+                            else:
+                                st.write(f"🔹 Unknown: {count}")
+                    else:
+                        st.write("No nodes in the network yet.")
+                except Exception as e:
+                    st.write(f"Error displaying node types: {str(e)}")
+                    logger.error(f"Error displaying node types: {str(e)}")
         
         st.divider()
         
@@ -490,36 +516,30 @@ try:
     # Initialize or start/stop the simulation based on user input
     if 'simulator' not in st.session_state:
         # Create the simulator and neural network
-        import random
-        
-        # Try to use our custom classes first, falling back to imported ones if needed
         try:
             # Use our custom NeuralNetwork class
             logger.info("Using custom NeuralNetwork class for better compatibility")
             network = CustomNeuralNetwork(max_nodes=st.session_state.max_nodes)
             
-            # Initialize with exactly one node of a random type
-            # Use a safer approach to select node types
-            try:
-                # Choose a basic node type that should work
-                node_type = 'input'  # Use the most basic type
-                logger.info(f"Creating initial node with type: {node_type}")
-                
-                # Create initial node
-                initial_node = network.add_node(visible=True, node_type=node_type)
-                initial_node.energy = 100.0  # Start with full energy
-                logger.info(f"Created initial {node_type} node with ID {initial_node.id}")
-                
-            except Exception as e:
-                logger.error(f"Error creating initial node with custom class: {str(e)}")
-                logger.error(traceback.format_exc())
-                raise
-                
-            # Use our custom NetworkSimulator
+            # Create an initial node to start with
+            initial_node = network.add_node(
+                position=(0, 0, 0),
+                visible=True,
+                node_type='input'
+            )
+            initial_node.energy = 100.0  # Start with full energy
+            logger.info(f"Created initial input node with ID {initial_node.id}")
+            
+            # Use our custom NetworkSimulator class
             logger.info("Using custom NetworkSimulator class for better compatibility")
             simulator = CustomNetworkSimulator(network)
             
-            # Use our custom ContinuousVisualizer
+            # Set auto-generate based on user preference
+            simulator.auto_generate = st.session_state.auto_generate
+            simulator.node_generation_rate = 10.0  # Generate a new node every 10 seconds if enabled
+            simulator.simulation_speed = 1.0  # Default simulation speed
+            
+            # Use our custom ContinuousVisualizer class
             logger.info("Using custom ContinuousVisualizer class for better compatibility")
             visualizer = CustomContinuousVisualizer(
                 simulator=simulator, 
@@ -527,66 +547,13 @@ try:
                 update_interval=0.05,  # Update more frequently (20 FPS)
                 buffer_size=3  # Smaller buffer for more immediate updates
             )
-        
+            
         except Exception as e:
-            logger.warning(f"Failed to use custom classes, falling back to imported ones: {str(e)}")
+            logger.error(f"Error initializing custom classes: {str(e)}")
+            logger.error(traceback.format_exc())
+            st.error(f"Failed to initialize simulation: {str(e)}")
+            raise
             
-            # Fall back to imported NeuralNetwork
-            network = NeuralNetwork(max_nodes=st.session_state.max_nodes)
-            
-            # Use a safer approach to select node types
-            try:
-                # First, log available node types for debugging
-                available_node_types = list(NODE_TYPES.keys())
-                logger.info(f"Available node types: {available_node_types}")
-                
-                # Choose a node type that definitely exists in NODE_TYPES
-                if available_node_types:
-                    node_type = random.choice(available_node_types)
-                    logger.info(f"Selected node type: {node_type}")
-                else:
-                    # Fallback to a basic type if NODE_TYPES is empty
-                    node_type = 'input'  # Use a basic type as fallback
-                    logger.warning(f"No node types available, using fallback type: {node_type}")
-                
-                # Create initial node with the selected node type
-                logger.info(f"Creating initial node with type: {node_type}")
-                
-                # Try to create the node with position parameter
-                try:
-                    # Generate a random position
-                    position = [random.uniform(-5, 5), random.uniform(-5, 5), random.uniform(-5, 5)]
-                    initial_node = network.add_node(position=position, visible=True, node_type=node_type)
-                except TypeError:
-                    # If position is not accepted, try without it
-                    logger.info("Trying to create node without position parameter")
-                    initial_node = network.add_node(visible=True, node_type=node_type)
-                
-                initial_node.energy = 100.0  # Start with full energy
-                logger.info(f"Created initial {node_type} node with ID {initial_node.id}")
-                
-            except Exception as e:
-                logger.error(f"Error creating initial node: {str(e)}")
-                logger.error(traceback.format_exc())
-                st.error(f"Failed to create initial node: {str(e)}")
-                raise
-        
-        # Use imported NetworkSimulator with imported NeuralNetwork
-        simulator = NetworkSimulator(network)
-        
-        # Set auto-generate based on user preference
-        simulator.auto_generate = st.session_state.auto_generate
-        simulator.node_generation_rate = 10.0  # Generate a new node every 10 seconds if enabled
-        simulator.simulation_speed = 1.0  # Default simulation speed
-            
-        # Create the visualizer with more frequent updates
-        visualizer = ContinuousVisualizer(
-            simulator=simulator, 
-            mode='3d' if st.session_state.visualization_mode == '3D' else '2d',
-            update_interval=0.05,  # Update more frequently (20 FPS)
-            buffer_size=3  # Smaller buffer for more immediate updates
-        )
-        
         # Store in session state
         st.session_state.simulator = simulator
         st.session_state.network = network
@@ -659,29 +626,24 @@ except Exception as e:
 class CustomNetworkSimulator:
     """A more robust NetworkSimulator class for Streamlit Cloud deployment."""
     
-    def __init__(self, network):
+    def __init__(self, network, energy_zones=None):
         """Initialize the network simulator.
         
         Args:
             network: The neural network to simulate
+            energy_zones: Optional list of energy zones
         """
         self.network = network
+        self.energy_zones = energy_zones or []
         self.running = False
         self.simulation_thread = None
         self.simulation_speed = 1.0
         self.auto_generate = False
         self.node_generation_rate = 10.0  # Generate a new node every 10 seconds if enabled
         self.last_node_generation_time = 0
-        self.energy_zones = []
-        
-        # Import necessary modules
-        import threading
-        import time
-        self.threading = threading
-        self.time = time
-        
-        # Initialize lock for thread safety
         self.lock = threading.Lock()
+        self.node_types = ['input', 'hidden', 'output']  # Define valid node types
+        logger.info("CustomNetworkSimulator initialized")
     
     def start(self):
         """Start the simulation."""
@@ -689,7 +651,7 @@ class CustomNetworkSimulator:
             return
                 
         self.running = True
-        self.simulation_thread = self.threading.Thread(target=self._run_simulation, daemon=True)
+        self.simulation_thread = threading.Thread(target=self._run_simulation, daemon=True)
         self.simulation_thread.start()
         logger.info("Simulation started")
     
@@ -708,18 +670,19 @@ class CustomNetworkSimulator:
         while self.running:
             try:
                 # Simulate at the specified speed
-                self.time.sleep(0.1 / self.simulation_speed)
+                time.sleep(0.1 / self.simulation_speed)
                 
                 # Update the network
                 with self.lock:
                     # Auto-generate nodes if enabled
                     if self.auto_generate and len(self.network.nodes) < self.network.max_nodes:
-                        current_time = self.time.time()
+                        current_time = time.time()
                         if current_time - self.last_node_generation_time > self.node_generation_rate:
-                            import random
-                            node_type = random.choice(['input', 'hidden', 'output'])
-                            self.network.add_node(visible=True, node_type=node_type)
+                            # Use our custom node generation method
+                            new_node = self._generate_node()
+                            self.network.add_node_object(new_node)
                             self.last_node_generation_time = current_time
+                            logger.debug(f"Auto-generated new node, total nodes: {len(self.network.nodes)}")
                     
                     # Update energy for all nodes
                     for node in self.network.nodes:
@@ -740,7 +703,7 @@ class CustomNetworkSimulator:
             except Exception as e:
                 logger.error(f"Error in simulation loop: {str(e)}")
                 logger.error(traceback.format_exc())
-                self.time.sleep(1.0)  # Sleep to avoid tight error loop
+                time.sleep(1.0)  # Sleep to avoid tight error loop
     
     def create_energy_zone(self, position, radius=3.0, energy=100.0):
         """Create an energy zone at the specified position."""
@@ -756,6 +719,30 @@ class CustomNetworkSimulator:
         if 0 <= index < len(self.energy_zones):
             self.energy_zones.pop(index)
             logger.info(f"Removed energy zone at index {index}")
+
+    def _generate_node(self):
+        """Generate a new node with random position and type."""
+        try:
+            x = random.uniform(-1, 1)
+            y = random.uniform(-1, 1)
+            z = random.uniform(-1, 1)
+            
+            # Ensure we use a valid node type
+            node_type = random.choice(self.node_types)
+            
+            # Create a new node with explicit node_type
+            new_node = CustomNode(
+                position=(x, y, z),
+                node_type=node_type,
+                energy=random.uniform(0.1, 0.5)
+            )
+            
+            logger.debug(f"Generated new node of type {node_type} at position ({x:.2f}, {y:.2f}, {z:.2f})")
+            return new_node
+        except Exception as e:
+            logger.error(f"Error generating node: {str(e)}")
+            # Return a default node as fallback
+            return CustomNode(position=(0, 0, 0), node_type='input', energy=0.1)
 
 # Define a custom ContinuousVisualizer class
 class CustomContinuousVisualizer:
