@@ -101,6 +101,53 @@ try:
         
         # Get the NeuralNetwork class from the module
         NeuralNetwork = getattr(neuneuraly_module, "NeuralNetwork")
+        # Also get the NODE_TYPES dictionary
+        try:
+            NODE_TYPES = getattr(neuneuraly_module, "NODE_TYPES")
+            logger.info(f"Successfully imported NODE_TYPES dictionary with {len(NODE_TYPES)} node types")
+        except (AttributeError, ImportError) as e:
+            logger.warning(f"Failed to import NODE_TYPES: {str(e)}")
+            # Define a fallback NODE_TYPES dictionary with basic types
+            NODE_TYPES = {
+                'input': {
+                    'color': '#4287f5',  # Blue
+                    'size_range': (40, 150),
+                    'firing_rate': (0.1, 0.3),
+                    'decay_rate': (0.02, 0.05),
+                    'connection_strength': 1.2,
+                    'resurrection_chance': 0.2,
+                    'generation_weight': 1.0
+                },
+                'hidden': {
+                    'color': '#f54242',  # Red
+                    'size_range': (50, 180),
+                    'firing_rate': (0.15, 0.4),
+                    'decay_rate': (0.03, 0.07),
+                    'connection_strength': 1.5,
+                    'resurrection_chance': 0.18,
+                    'generation_weight': 1.0
+                },
+                'explorer': {
+                    'color': '#FF5733',  # Orange-red
+                    'size_range': (50, 200),
+                    'firing_rate': (0.2, 0.5),
+                    'decay_rate': (0.03, 0.08),
+                    'connection_strength': 1.5,
+                    'resurrection_chance': 0.15,
+                    'generation_weight': 1.0
+                },
+                'connector': {
+                    'color': '#33A8FF',  # Blue
+                    'size_range': (100, 250),
+                    'firing_rate': (0.1, 0.3),
+                    'decay_rate': (0.02, 0.05),
+                    'connection_strength': 2.0,
+                    'resurrection_chance': 0.2,
+                    'generation_weight': 1.0
+                }
+            }
+            logger.info(f"Created fallback NODE_TYPES dictionary with {len(NODE_TYPES)} node types")
+        
         logger.info("Successfully imported NeuralNetwork class")
         
         # Now import NetworkSimulator
@@ -287,7 +334,13 @@ try:
         simulator = NetworkSimulator(network)
         
         # Initialize with exactly one node of a random type
-        node_type = random.choice(['input', 'hidden', 'output'])
+        node_type = random.choice(['input', 'hidden', 'explorer', 'connector', 'memory', 'inhibitor', 'catalyst'])
+        
+        # Log available node types for debugging
+        logger.info(f"Available node types: {list(NODE_TYPES.keys())}")
+        
+        # Create initial node with a safe node type
+        logger.info(f"Creating initial node with type: {node_type}")
         initial_node = network.add_node(visible=True, node_type=node_type)
         initial_node.energy = 100.0  # Start with full energy
         logger.info(f"Created initial {node_type} node with ID {initial_node.id}")
