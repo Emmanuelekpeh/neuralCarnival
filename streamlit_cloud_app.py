@@ -250,7 +250,7 @@ class CustomNetworkSimulator:
         self.running = False
         self.simulation_thread = None
         self.simulation_speed = 1.0
-        self.auto_generate = False
+        self.auto_generate = True
         self.node_generation_rate = 10.0  # Generate a new node every 10 seconds if enabled
         self.last_node_generation_time = 0
         self.lock = threading.Lock()
