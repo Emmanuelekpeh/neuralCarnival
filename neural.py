@@ -107,7 +107,7 @@ NODE_TYPES = {
 }
 
 class Node:
-    def __init__(self, node_id, node_type=None, visible=True, max_connections=15):
+    def __init__(self, node_id, node_type=None, visible=True, max_connections=15, position=None):
         if not node_type:
             # Random node type with weighted probability
             weights = [0.1] * 11  
@@ -134,8 +134,63 @@ class Node:
         self.successful_connections = 0
         
         # 3D position and movement variables
-        self.position = [random.uniform(-10, 10) for _ in range(3)]
+        if position:
+            self.position = position
+        else:
+            self.position = [random.uniform(-10, 10) for _ in range(3)]
         self.velocity = [random.uniform(-0.05, 0.05) for _ in range(3)]
+        
+    def get_display_size(self):
+        """Get the display size of the node.
+        
+        Returns:
+            The display size as a float
+        """
+        # Base size
+        base_size = getattr(self, 'size', 5.0)
+        
+        # Adjust size based on energy if available
+        if hasattr(self, 'energy'):
+            # Scale size with energy (min 0.5x, max 2x of base size)
+            energy_factor = max(0.5, min(2.0, self.energy / 100.0))
+            base_size *= energy_factor
+        
+        # Adjust size based on activation if available
+        if hasattr(self, 'activation') and self.activation > 0:
+            # Add up to 50% more size when activated
+            activation_boost = 1.0 + (self.activation * 0.5)
+            base_size *= activation_boost
+        
+        # Ensure minimum size
+        return max(2.0, base_size)
+    
+    def get_display_color(self):
+        """Get the display color of the node.
+        
+        Returns:
+            The display color as a string or RGB tuple
+        """
+        if hasattr(self, 'properties') and 'color' in self.properties:
+            return self.properties['color']
+        
+        # Default colors for different node types
+        type_colors = {
+            'input': 'rgb(66, 133, 244)',    # Blue
+            'hidden': 'rgb(234, 67, 53)',    # Red
+            'output': 'rgb(52, 168, 83)',    # Green
+            'bias': 'rgb(251, 188, 5)',      # Yellow
+            'explorer': 'rgb(171, 71, 188)', # Purple
+            'connector': 'rgb(255, 138, 101)', # Orange
+            'memory': 'rgb(79, 195, 247)',   # Light blue
+            'inhibitor': 'rgb(158, 158, 158)', # Gray
+            'processor': 'rgb(174, 213, 129)' # Light green
+        }
+        
+        if hasattr(self, 'type') and self.type in type_colors:
+            return type_colors[self.type]
+        
+        # Default color
+        return 'rgb(100, 100, 100)'  # Dark gray
         
     def fire(self, network):
         """Attempt to connect to other nodes with behavior based on node type."""
@@ -450,7 +505,8 @@ class NeuralNetwork:
                 node.size = random.uniform(*node.properties['size_range']) * 0.7
                 return node
         
-        node = Node(len(self.nodes), node_type=node_type, visible=visible, max_connections=max_connections)
+        position = [random.uniform(-10, 10), random.uniform(-10, 10), random.uniform(-10, 10)]
+        node = Node(len(self.nodes), position=position, node_type=node_type, visible=visible, max_connections=max_connections)
         self.nodes.append(node)
         self.graph.add_node(node.id)
         return node

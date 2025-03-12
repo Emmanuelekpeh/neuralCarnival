@@ -1,6 +1,15 @@
 """
 Neural Carnival - Streamlit Cloud Entry Point
 This file serves as the entry point for Streamlit Cloud deployment.
+
+This application simulates a neural network with nodes and connections, visualized in 2D or 3D using Plotly.
+The main components include:
+- CustomNode: Represents a node in the neural network.
+- CustomNeuralNetwork: Manages nodes and connections.
+- CustomNetworkSimulator: Simulates the network dynamics.
+- CustomContinuousVisualizer: Visualizes the network state.
+
+The application is designed to run on Streamlit Cloud, with a user interface for controlling the simulation.
 """
 
 import os
@@ -9,7 +18,6 @@ import logging
 import streamlit as st
 import traceback
 import importlib.util
-import inspect
 import random
 import threading
 import time

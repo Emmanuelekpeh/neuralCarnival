@@ -28,7 +28,7 @@ class TestNode(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.node = Node(node_id=0, node_type='explorer')
+        self.node = Node(node_id=0, position=[0, 0, 0], node_type='explorer')
     
     def test_initialization(self):
         """Test that a node initializes correctly."""
@@ -39,7 +39,7 @@ class TestNode(unittest.TestCase):
     
     def test_connect(self):
         """Test that nodes can connect to each other."""
-        other_node = Node(node_id=1, node_type='memory')
+        other_node = Node(node_id=1, position=[1, 1, 1], node_type='memory')
         self.node.connect(other_node)
         
         # Check that the connection exists

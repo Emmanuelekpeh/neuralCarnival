@@ -15,6 +15,9 @@ import imageio
 from PIL import Image
 import logging
 from concurrent.futures import ThreadPoolExecutor
+import threading
+import io
+from IPython.display import HTML
 
 # Setup logging
 logger = logging.getLogger("neural_carnival.animation")
@@ -514,23 +517,19 @@ def create_realtime_video(network_simulator,
         pass  # Keep the simulator running
 
 class ContinuousVideoRecorder:
-    """
-    A class for continuous video recording from a neural network simulation.
-    This allows for seamless recording without interrupting the simulation.
-    """
+    """A recorder for continuous video recording from a neural network simulation."""
     
-    def __init__(self, network_simulator, fps=30, max_duration=60, resolution=(1200, 800), mode='3d'):
-        """
-        Initialize the continuous video recorder.
+    def __init__(self, network_simulator, fps=30, max_duration=30, resolution=(800, 600), mode='3d'):
+        """Initialize the continuous video recorder.
         
         Args:
             network_simulator: The network simulator instance
             fps: Frames per second
             max_duration: Maximum duration in seconds
-            resolution: Video resolution as (width, height)
+            resolution: Resolution of the video (width, height)
             mode: Visualization mode ('3d' or '2d')
         """
-        self.network_simulator = network_simulator
+        self.simulator = network_simulator
         self.fps = fps
         self.max_duration = max_duration
         self.resolution = resolution
@@ -540,166 +539,198 @@ class ContinuousVideoRecorder:
         self.frames = []
         self.start_time = None
         self.frame_count = 0
-        self.position_buffer = SmoothTransitionBuffer(max_buffer_size=5)
         self.last_frame_time = 0
-        self.frame_interval = 1.0 / fps
+        self.recording_thread = None
         
-        # Create a temporary directory for frames
-        self.temp_dir = tempfile.TemporaryDirectory()
-    
     def start_recording(self):
         """Start recording frames."""
         if self.recording:
             return
-        
+            
         self.recording = True
         self.frames = []
         self.start_time = time.time()
         self.frame_count = 0
-        self.last_frame_time = self.start_time
+        self.last_frame_time = 0
         
-        # Start the recording thread
-        import threading
         self.recording_thread = threading.Thread(target=self._record_frames)
         self.recording_thread.daemon = True
         self.recording_thread.start()
         
-        return True
-    
+        logger.info("Recording started")
+        
     def stop_recording(self):
         """Stop recording frames."""
         if not self.recording:
             return
-        
+            
         self.recording = False
+        if self.recording_thread:
+            self.recording_thread.join(timeout=0.5)
+            
+        logger.info(f"Recording stopped with {len(self.frames)} frames")
         
-        # Wait for the recording thread to finish
-        if hasattr(self, 'recording_thread'):
-            self.recording_thread.join(timeout=2.0)
-        
-        return True
-    
     def _record_frames(self):
-        """Record frames in a background thread."""
-        try:
-            while self.recording:
+        """Record frames from the simulation."""
+        while self.recording:
+            try:
                 current_time = time.time()
                 elapsed = current_time - self.start_time
                 
                 # Check if we've reached the maximum duration
                 if elapsed >= self.max_duration:
-                    self.recording = False
+                    self.stop_recording()
                     break
-                
-                # Check if it's time to capture a new frame
-                if current_time - self.last_frame_time >= self.frame_interval:
+                    
+                # Check if it's time to capture a frame
+                frame_interval = 1.0 / self.fps
+                if (current_time - self.last_frame_time) >= frame_interval:
                     # Capture a frame
                     self._capture_frame()
                     self.last_frame_time = current_time
+                    
+                # Small sleep to prevent CPU hogging
+                time.sleep(0.01)
                 
-                # Sleep a bit to avoid high CPU usage
-                time.sleep(min(0.01, self.frame_interval / 2))
-        except Exception as e:
-            logger.exception("Error in recording thread")
-            self.recording = False
-    
+            except Exception as e:
+                logger.error(f"Error in recording loop: {str(e)}")
+                time.sleep(0.1)
+                
     def _capture_frame(self):
-        """Capture a single frame."""
+        """Capture a frame from the simulation."""
         try:
-            # Get current network state
-            positions = {}
-            for node in self.network_simulator.network.nodes:
-                if hasattr(node, 'position') and node.visible:
-                    # Ensure position is a list, not a tuple
-                    pos = node.position.copy() if isinstance(node.position, list) else list(node.position)
-                    positions[node.id] = pos
-            
-            # Update positions buffer
-            self.position_buffer.add_positions(positions)
-            
-            # Get smoothed positions
-            smoothed_positions = self.position_buffer.get_smoothed_positions()
-            
-            # Create a temporary copy of the network for visualization
-            import copy
-            network_copy = copy.deepcopy(self.network_simulator.network)
-            
-            # Apply smoothed positions to nodes for visualization
-            for node in network_copy.nodes:
-                if node.id in smoothed_positions:
-                    node.position = smoothed_positions[node.id]
+            # Check if simulator is available
+            if not self.simulator or not hasattr(self.simulator, 'network'):
+                logger.warning("Simulator or network not available")
+                return
+                
+            # Get the network
+            network = self.simulator.network
             
             # Create visualization
-            fig = network_copy.visualize(mode=self.mode)
-            
-            # Add frame counter and timestamp
-            elapsed_time = time.time() - self.start_time
-            fig.add_annotation(
-                text=f"Frame {self.frame_count+1} | Time: {elapsed_time:.2f}s",
-                xref="paper", yref="paper",
-                x=0.02, y=0.98,
-                showarrow=False,
-                font=dict(size=14, color="white"),
-                bgcolor="rgba(0,0,0,0.5)",
-                bordercolor="white",
-                borderwidth=1,
-                borderpad=4
+            if self.mode == '3d':
+                fig = network._create_3d_visualization()
+            else:
+                fig = network._create_2d_visualization()
+                
+            # Update layout for fixed size
+            fig.update_layout(
+                width=self.resolution[0],
+                height=self.resolution[1],
+                margin=dict(l=0, r=0, t=0, b=0)
             )
             
-            # Capture as image
-            img = capture_plot_as_image(fig, width=self.resolution[0], height=self.resolution[1])
+            # Convert to image
+            img_bytes = fig.to_image(format='png')
+            img = Image.open(io.BytesIO(img_bytes))
+            
+            # Add to frames
             self.frames.append(img)
             self.frame_count += 1
             
-            return True
+            if self.frame_count % 10 == 0:
+                logger.info(f"Captured frame {self.frame_count}")
+                
         except Exception as e:
-            logger.exception(f"Error capturing frame: {str(e)}")
-            return False
-    
-    def save_video(self, output_path="network_recording.mp4"):
-        """
-        Save the recorded frames as a video.
+            logger.error(f"Error capturing frame: {str(e)}")
+            
+    def save_video(self, filename, codec='h264', quality=8):
+        """Save the recorded frames as a video.
         
         Args:
-            output_path: Path to save the video
+            filename: The filename to save to
+            codec: The video codec to use
+            quality: The video quality (0-10)
             
         Returns:
-            Path to the created video file
+            The path to the saved video
         """
         if not self.frames:
             logger.warning("No frames to save")
             return None
-        
+            
         try:
-            # Ensure output directory exists
-            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
             
             # Save video
-            imageio.mimsave(output_path, self.frames, fps=self.fps)
+            imageio.mimsave(
+                filename,
+                self.frames,
+                fps=self.fps,
+                quality=quality,
+                codec=codec
+            )
             
-            return output_path
+            logger.info(f"Video saved to {filename}")
+            return filename
+            
         except Exception as e:
-            logger.exception(f"Error saving video: {str(e)}")
+            logger.error(f"Error saving video: {str(e)}")
             return None
-    
-    def get_preview_frame(self):
-        """Get the latest frame for preview."""
-        if not self.frames:
-            return None
+            
+    def get_html_video(self):
+        """Get an HTML video element for the recorded frames.
         
-        return self.frames[-1]
-    
-    def get_recording_stats(self):
-        """Get recording statistics."""
-        return {
-            'recording': self.recording,
-            'frame_count': self.frame_count,
-            'duration': time.time() - self.start_time if self.start_time else 0,
-            'fps': self.fps,
-            'estimated_size_mb': len(self.frames) * (self.resolution[0] * self.resolution[1] * 3) / (1024 * 1024)
-        }
-    
-    def __del__(self):
-        """Clean up temporary directory."""
-        if hasattr(self, 'temp_dir'):
-            self.temp_dir.cleanup()
+        Returns:
+            An HTML video element
+        """
+        if not self.frames:
+            logger.warning("No frames to display")
+            return None
+            
+        try:
+            # Create a temporary file
+            temp_file = f"temp_video_{int(time.time())}.mp4"
+            
+            # Save video
+            self.save_video(temp_file)
+            
+            # Read the file
+            with open(temp_file, 'rb') as f:
+                video_data = f.read()
+                
+            # Remove the temporary file
+            os.remove(temp_file)
+            
+            # Encode as base64
+            video_base64 = base64.b64encode(video_data).decode('utf-8')
+            
+            # Create HTML
+            html = f"""
+            <video width="{self.resolution[0]}" height="{self.resolution[1]}" controls>
+                <source src="data:video/mp4;base64,{video_base64}" type="video/mp4">
+                Your browser does not support the video tag.
+            </video>
+            """
+            
+            return HTML(html)
+            
+        except Exception as e:
+            logger.error(f"Error creating HTML video: {str(e)}")
+            return None
+            
+    def get_frame_count(self):
+        """Get the number of frames recorded.
+        
+        Returns:
+            The number of frames
+        """
+        return len(self.frames)
+        
+    def get_duration(self):
+        """Get the duration of the recording.
+        
+        Returns:
+            The duration in seconds
+        """
+        if not self.frames:
+            return 0
+            
+        return len(self.frames) / self.fps
+        
+    def clear_frames(self):
+        """Clear all recorded frames."""
+        self.frames = []
+        self.frame_count = 0
+        logger.info("Frames cleared")

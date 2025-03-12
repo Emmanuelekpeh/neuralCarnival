@@ -21,23 +21,28 @@ import plotly.graph_objects as go
 
 # Setup logging
 logger = logging.getLogger("neural_carnival.integration")
+logger.info("Initializing Neural Carnival integration module")
 
 # Define fallback classes for when imports fail
 class FallbackSimulator:
     """Fallback simulator when real simulator can't be imported."""
     def __init__(self):
+        logger.warning("Using FallbackSimulator due to import failure")
         st.error("NetworkSimulator could not be imported. Please check your installation.")
         st.info("Make sure all dependencies are installed with 'pip install -r requirements.txt'")
         self.running = False
         self.network = None
     
     def start(self, *args, **kwargs):
+        logger.warning("Attempted to start FallbackSimulator")
         st.warning("Simulation cannot be started: NetworkSimulator not available")
     
     def stop(self):
+        logger.warning("Attempted to stop FallbackSimulator")
         pass
     
     def send_command(self, command):
+        logger.warning(f"Attempted to send command to FallbackSimulator: {command}")
         pass
 
 # Global variables to hold imported classes
@@ -48,6 +53,8 @@ ResilienceManager = None
 recover_from_error = None
 setup_auto_checkpointing = None
 
+logger.info("Starting module imports with multiple fallback approaches")
+
 # Try to import modules with multiple fallback approaches
 try:
     # Try different import approaches
@@ -56,28 +63,31 @@ try:
     
     # Approach 1: Direct import
     try:
-        logger.debug("Attempting direct import from neuneuraly")
+        logger.info("Attempting direct import from neuneuraly")
         from neuneuraly import NetworkSimulator, auto_populate_nodes, NODE_TYPES
         import_success = True
         logger.info("Successfully imported from neuneuraly")
     except ImportError as e:
+        logger.warning(f"Direct import failed: {str(e)}")
         import_errors.append(f"Direct import failed: {str(e)}")
         
     # Approach 2: Relative import
     if not import_success:
         try:
-            logger.debug("Attempting relative import from .neuneuraly")
+            logger.info("Attempting relative import from .neuneuraly")
             from .neuneuraly import NetworkSimulator, auto_populate_nodes, NODE_TYPES
             import_success = True
             logger.info("Successfully imported from .neuneuraly")
         except ImportError as e:
+            logger.warning(f"Relative import failed: {str(e)}")
             import_errors.append(f"Relative import failed: {str(e)}")
     
     # Approach 3: Import with full path
     if not import_success:
         try:
-            logger.debug("Attempting import with full path")
+            logger.info("Attempting import with full path")
             module_path = os.path.join(os.path.dirname(__file__), 'neuneuraly.py')
+            logger.debug(f"Full module path: {module_path}")
             spec = importlib.util.spec_from_file_location("neuneuraly", module_path)
             neuneuraly = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(neuneuraly)
@@ -87,18 +97,22 @@ try:
             import_success = True
             logger.info("Successfully imported with full path")
         except Exception as e:
+            logger.warning(f"Full path import failed: {str(e)}")
             import_errors.append(f"Full path import failed: {str(e)}")
     
     # If all imports failed, use fallback
     if not import_success:
-        logger.error(f"All import attempts failed: {import_errors}")
+        logger.error("All import attempts failed")
+        for error in import_errors:
+            logger.error(f"Import error: {error}")
         NetworkSimulator = FallbackSimulator
         auto_populate_nodes = lambda *args, **kwargs: None
         NODE_TYPES = {}
+        logger.warning("Using fallback components")
         
     # Try to import resilience components
     try:
-        logger.debug("Attempting to import resilience components")
+        logger.info("Attempting to import resilience components")
         from resilience import ResilienceManager, recover_from_error, setup_auto_checkpointing
         logger.info("Successfully imported resilience components")
     except ImportError as e:
@@ -106,57 +120,60 @@ try:
         # Define minimal fallback classes
         class MinimalResilienceManager:
             def __init__(self, *args, **kwargs):
+                logger.warning("Using MinimalResilienceManager fallback")
                 pass
             def create_checkpoint(self, *args, **kwargs):
+                logger.warning("Attempted checkpoint creation with fallback manager")
                 pass
             def restore_checkpoint(self, *args, **kwargs):
+                logger.warning("Attempted checkpoint restoration with fallback manager")
                 pass
         
         ResilienceManager = MinimalResilienceManager
         recover_from_error = lambda *args, **kwargs: None
         setup_auto_checkpointing = lambda *args, **kwargs: None
+        logger.warning("Using minimal resilience components")
         
 except Exception as e:
-    logger.exception("Unexpected error during imports")
+    logger.exception("Unexpected error during module initialization")
     st.error(f"An unexpected error occurred during initialization: {str(e)}")
     NetworkSimulator = FallbackSimulator
     auto_populate_nodes = lambda *args, **kwargs: None
     NODE_TYPES = {}
+    logger.error("Falling back to minimal components due to critical error")
 
 # Initialize session state if not already done
 def _initialize_session_state():
-    """Initialize all session state variables."""
-    initial_states = {
-        'viz_mode': '3d',  # Default visualization mode
-        'refresh_interval': 0.5,  # Default refresh interval as float
+    """Initialize session state variables if they don't exist."""
+    # Default values for session state
+    defaults = {
+        'simulator': None,
+        'simulator_running': False,
         'simulation_speed': 1.0,
-        'auto_generate_nodes': True,
+        'learning_rate': 0.1,
+        'auto_generate_nodes': False,
         'node_generation_rate': 0.1,
         'max_nodes': 200,
-        'animation_enabled': True,
-        'show_tendrils': True,
-        'tendril_persistence': 20,
-        'refresh_rate': 5,
-        'use_dark_mode': False,
-        'force_refresh': False,
-        'buffered_rendering': True,
-        'render_interval': 0.5,
-        'render_frequency': 5,
-        'simulation_running': False,
-        'frame_count': 0,
-        'display_update_interval': 0.5,
-        'last_render_time': time.time(),
-        'last_update': time.time(),
-        'last_display_update': time.time(),
-        'viz_error_count': 0,
-        'learning_rate': 0.1,
-        'energy_decay_rate': 0.05,
-        'connection_threshold': 1.0,
-        'auto_refresh': True
+        'viz_mode': '3d',
+        'dark_mode': False,
+        'node_scale': 1.0,
+        'edge_scale': 1.0,
+        'refresh_interval': 0.5,  # Default refresh interval as float
+        'auto_refresh': True,
+        'show_advanced': False,
+        'show_debug': False,
+        'last_checkpoint': None,
+        'checkpoint_interval': 5,  # minutes
+        'auto_checkpoint': True,
+        'resilience_level': 'medium',
+        'viz_error_count': 0,  # Track visualization errors
+        'last_error': None,
+        'recovery_attempts': 0,
+        'viz_placeholder': None,
     }
     
-    # Initialize all state variables if not already present
-    for key, value in initial_states.items():
+    # Initialize all default values if they don't exist
+    for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
     
@@ -168,158 +185,207 @@ def _initialize_session_state():
 def display_app():
     """Display the main application interface."""
     try:
-        # Create tabs for different sections
-        tabs = st.tabs(["Simulation", "Analysis", "Export", "Settings", "Help"])
+        # Create the tabs but assign them directly to variables
+        # This avoids issues with nested containers and state handling
+        tab_labels = ["Simulation", "Analysis", "Export", "Settings", "Help"]
+        sim_tab, analysis_tab, export_tab, settings_tab, help_tab = st.tabs(tab_labels)
         
-        # Simulation tab
-        with tabs[0]:
+        # Simulation tab - using direct reference for container
+        with sim_tab:
             _display_simulation_interface()
         
         # Analysis tab
-        with tabs[1]:
+        with analysis_tab:
             _display_analysis_interface()
         
         # Export tab
-        with tabs[2]:
+        with export_tab:
             _display_export_interface()
         
         # Settings tab
-        with tabs[3]:
+        with settings_tab:
             _display_settings_interface()
         
         # Help tab
-        with tabs[4]:
+        with help_tab:
             _display_help_information()
         
-        # Process any errors from the simulator
-        if st.session_state.simulator:
-            results = st.session_state.simulator.get_latest_results()
-            for result in results:
-                if 'error' in result:
-                    st.error(f"Simulation error: {result['error']}")
-                    if 'traceback' in result:
-                        with st.expander("Error details"):
-                            st.code(result['traceback'])
-    
+        # Handle simulation errors without accessing nested state
+        if 'simulator' in st.session_state and st.session_state.simulator:
+            try:
+                results = st.session_state.simulator.get_latest_results()
+                if results:
+                    for result in results:
+                        if 'error' in result:
+                            st.sidebar.error(f"Simulation error: {result['error']}")
+                            if 'traceback' in result:
+                                with st.sidebar.expander("Error details"):
+                                    st.code(result['traceback'])
+            except Exception as err:
+                logger.error(f"Error processing simulation results: {str(err)}")
     except Exception as e:
-        st.error(f"Error displaying application: {str(e)}")
-        logger.error(f"Error displaying application: {str(e)}")
+        logger.error(f"Error in display_app: {str(e)}")
         logger.error(traceback.format_exc())
+        st.error(f"Application error: {str(e)}")
+        if st.button("Restart Application"):
+            st.rerun()
 
 def create_enhanced_ui():
-    """Create an enhanced UI for the neural network simulation."""
-    # Create the main header
-    st.title("Neural Carnival 🧠")
-    st.markdown("### Interactive Neural Network Simulation")
+    """Create an enhanced UI with improved layout and interactivity."""
+    try:
+        # Initialize session state
+        _initialize_session_state()
+        
+        # Create app header
+        st.title("Neural Carnival")
+        st.markdown("### A Dynamic Neural Network Simulation")
+        
+        # Display main application interface
+        display_app()
+        
+        # Footer
+        st.markdown("---")
+        st.caption("Neural Carnival © 2023 - Built with Streamlit")
     
-    # Create tabs for different sections
-    tabs = st.tabs(["Simulation", "Analysis", "Export", "Settings", "Help"])
-    
-    # Set the active tab in session state
-    if "active_tab" not in st.session_state:
-        st.session_state.active_tab = "Simulation"
-    
-    # Display the appropriate interface based on the active tab
-    with tabs[0]:
-        st.session_state.active_tab = "Simulation"
-        _display_simulation_interface()
-    
-    with tabs[1]:
-        if st.session_state.active_tab == "Analysis":
-            _display_analysis_interface()
-    
-    with tabs[2]:
-        if st.session_state.active_tab == "Export":
-            _display_export_interface()
-    
-    with tabs[3]:
-        if st.session_state.active_tab == "Settings":
-            _display_settings_interface()
-    
-    with tabs[4]:
-        if st.session_state.active_tab == "Help":
-            _display_help_information()
+    except Exception as e:
+        logger.error(f"Error in enhanced UI: {str(e)}")
+        logger.error(traceback.format_exc())
+        
+        # Display basic fallback UI
+        st.error("Error loading enhanced interface")
+        st.warning("Displaying basic interface due to an error.")
+        
+        # Create basic tabs
+        basic_tabs = st.tabs(["Basic Simulation", "Help"])
+        
+        with basic_tabs[0]:
+            _display_simulation_interface()
+        
+        with basic_tabs[1]:
+            st.info("""
+            ## Help
+            If you're seeing this message, something went wrong with the enhanced interface.
+            
+            Try the following:
+            - Refresh the page
+            - Clear your browser cache
+            - Check error logs for details
+            """)
+        
+        # Show error details
+        with st.expander("Error Details"):
+            st.code(traceback.format_exc())
 
 def _initialize_simulator():
     """Initialize the simulator if it doesn't exist."""
     try:
         if 'simulator' not in st.session_state or st.session_state.simulator is None:
+            logger.info("Creating new simulator instance")
             # Create a new simulator
             from frontend.src.neuneuraly import NetworkSimulator
+            from frontend.src.visualization import NetworkRenderer
             
             # Get max nodes from session state or use default
             max_nodes = st.session_state.get('max_nodes', 200)
+            logger.info(f"Initializing simulator with max_nodes={max_nodes}")
             
             # Create the simulator
             st.session_state.simulator = NetworkSimulator(max_nodes=max_nodes)
+            
+            # Add an initial node to ensure there's something to visualize
+            logger.info("Adding initial node to network")
+            st.session_state.simulator.network.add_node(visible=True)
+            
+            # Initialize renderer
+            logger.info("Initializing renderer")
+            st.session_state.simulator.renderer = NetworkRenderer()
+            st.session_state.simulator.renderer.network = st.session_state.simulator.network
             
             # Initialize other simulation parameters
             st.session_state.simulator.steps_per_second = st.session_state.get('simulation_speed', 1.0)
             st.session_state.simulator.auto_generate_nodes = st.session_state.get('auto_generate_nodes', False)
             
-            # Log initialization
-            logger.info(f"Initialized simulator with max_nodes={max_nodes}")
-            
+            logger.info("Simulator initialization completed successfully")
             return True
         return False
     except Exception as e:
+        logger.error("Critical error during simulator initialization")
+        logger.error(f"Error details: {str(e)}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
         st.error(f"Error initializing simulator: {str(e)}")
-        logger.error(f"Error initializing simulator: {str(e)}")
-        logger.error(traceback.format_exc())
         return False
 
 def _display_simulation_interface():
     """Display the main simulation interface."""
     try:
-        # Check if simulator exists
+        # Check if simulator exists and initialize if needed
         if 'simulator' not in st.session_state or not st.session_state.simulator:
             _initialize_simulator()
+        
+        # Get simulation status and set up auto-refresh
+        is_running = False
+        if st.session_state.simulator:
+            is_running = getattr(st.session_state.simulator, 'running', False)
+            
+            # Set auto-refresh for running simulations
+            if is_running and 'auto_refresh' in st.session_state and st.session_state.auto_refresh:
+                # Add a rerun every few seconds without complex UI elements
+                current_time = time.time()
+                if 'last_refresh_time' not in st.session_state:
+                    st.session_state.last_refresh_time = current_time
+                
+                refresh_interval = st.session_state.get('refresh_interval', 1.0)
+                elapsed = current_time - st.session_state.last_refresh_time
+                
+                if elapsed >= refresh_interval:
+                    logger.info(f"Auto-refreshing after {elapsed:.2f} seconds")
+                    st.session_state.last_refresh_time = current_time
+                    # Use native rerun for simplicity
+                    st.rerun()
         
         # Create columns for layout
         col1, col2 = st.columns([3, 1])
         
-        # Generate a unique key for this refresh cycle
-        refresh_key = int(time.time() * 1000)
-        
         with col1:
-            # Display drought status if active
-            if hasattr(st.session_state.simulator, 'is_drought_period') and st.session_state.simulator.is_drought_period:
-                remaining_steps = st.session_state.simulator.drought_end_step - st.session_state.simulator.step_count
-                st.warning(f"⚠️ **DROUGHT PERIOD ACTIVE** - Resources are scarce! Remaining steps: {remaining_steps}")
-            
             # Display visualization
             st.subheader("Neural Network Visualization")
             
-            # Create a placeholder for the visualization
-            viz_placeholder = st.empty()
+            # Simple visualization container
+            visualization_area = st.empty()
             
             # Get the latest visualization
-            if st.session_state.simulator:
-                # Force a render request to ensure we have the latest visualization
+            if st.session_state.simulator and st.session_state.simulator.renderer:
                 try:
-                    st.session_state.simulator.renderer.request_render(mode=st.session_state.viz_mode)
-                    # Small delay to allow rendering to complete
-                    time.sleep(0.1)
-                except Exception as e:
-                    logger.error(f"Error requesting render: {str(e)}")
-                
-                # Get the visualization after the render request
-                viz_fig = st.session_state.simulator.renderer.get_latest_visualization()
-                
-                if viz_fig:
-                    # Use a unique key for each refresh to force re-rendering
-                    viz_placeholder.plotly_chart(viz_fig, use_container_width=True, key=f"viz_{refresh_key}")
+                    logger.info("Requesting forced visualization update")
                     
-                    # Debug information
-                    st.write(f"Network has {len(st.session_state.simulator.network.nodes)} nodes, {sum(1 for node in st.session_state.simulator.network.nodes if node.visible)} visible")
-                else:
-                    viz_placeholder.info("Visualization not available. Waiting for renderer...")
+                    # Attempt to use force_update method for direct visualization
+                    fig = st.session_state.simulator.renderer.force_update(mode=st.session_state.viz_mode)
                     
-                    # Debug information
-                    if hasattr(st.session_state.simulator, 'renderer'):
-                        st.write("Renderer exists but no visualization available")
+                    if fig:
+                        logger.info("Forced visualization update successful")
+                        # Update the visualization - simple approach
+                        with visualization_area:
+                            # Use simple Plotly settings
+                            st.plotly_chart(
+                                fig, 
+                                use_container_width=True,
+                                config={
+                                    'displayModeBar': False,
+                                    'scrollZoom': True,
+                                    'responsive': True
+                                }
+                            )
+                        logger.info("Visualization updated successfully")
                     else:
-                        st.write("Renderer not initialized")
+                        logger.warning("No figure available from renderer")
+                        with visualization_area:
+                            st.info("Initializing visualization... Please wait.")
+                    
+                except Exception as e:
+                    logger.error(f"Error in visualization: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    with visualization_area:
+                        st.error(f"Visualization error: {str(e)}")
             
             # Display simulation statistics
             if st.session_state.simulator and st.session_state.simulator.network:
@@ -340,7 +406,6 @@ def _display_simulation_interface():
                     st.metric("Total Connections", total_connections)
                 
                 with stat_col4:
-                    # Count nodes that are currently firing
                     firing_nodes = sum(1 for node in st.session_state.simulator.network.nodes 
                                       if hasattr(node, 'is_firing') and node.is_firing)
                     st.metric("Firing Nodes", firing_nodes)
@@ -349,243 +414,193 @@ def _display_simulation_interface():
             # Simulation controls
             st.subheader("Simulation Controls")
             
-            # Start/Stop button
-            if st.session_state.simulator.running:
-                if st.button("Stop Simulation", key="stop_sim_button"):
-                    _stop_simulation()
-                    st.success("Simulation stopped.")
-            else:
-                if st.button("Start Simulation", key="start_sim_button"):
-                    _start_simulation()
-                    st.success("Simulation started.")
-                    # Force a rerun immediately after starting to update the interface
-                    time.sleep(0.1)
-                    st.rerun()
+            # Start/Stop button with simpler implementation
+            col_control, col_status = st.columns([3, 2])
             
-            # Add node button
-            if st.button("Add Node", key="add_node_button"):
+            with col_control:
+                # Check the actual running state directly from the simulator
+                is_running = False
                 if st.session_state.simulator:
-                    node_type = random.choice(list(NODE_TYPES.keys()))
-                    st.session_state.simulator.send_command({
-                        'type': 'add_node',
-                        'node_type': node_type
-                    })
-                    st.success(f"Added new {node_type} node.")
+                    is_running = getattr(st.session_state.simulator, 'running', False)
+                
+                if is_running:
+                    if st.button("Stop Simulation", key="stop_sim_button", use_container_width=True):
+                        logger.info("Stopping simulation...")
+                        _stop_simulation()
+                        st.success("Simulation stopped")
+                else:
+                    if st.button("Start Simulation", key="start_sim_button", use_container_width=True):
+                        logger.info("Starting simulation...")
+                        _start_simulation()
+                        st.success("Simulation started")
+            
+            with col_status:
+                if is_running:
+                    st.success("Running")
+                else:
+                    st.error("Stopped")
+            
+            # Simulation speed
+            speed = st.slider(
+                "Simulation Speed",
+                min_value=0.1,
+                max_value=10.0,
+                value=st.session_state.simulation_speed,
+                step=0.1,
+                format="%.1f",
+                key="speed_slider",
+                help="Steps per second"
+            )
+            
+            if speed != st.session_state.simulation_speed:
+                st.session_state.simulation_speed = speed
+                if is_running and st.session_state.simulator:
+                    st.session_state.simulator.steps_per_second = speed
+                    st.info(f"Simulation speed updated to {speed} steps/second.")
+            
+            # Node Type Selector and Add Node Button
+            try:
+                # Import NODE_TYPES for the selector
+                from neuneuraly import NODE_TYPES
+                
+                # Create a list of node types for the selector
+                node_types = list(NODE_TYPES.keys())
+                
+                # Add a selectbox for node type selection
+                selected_node_type = st.selectbox(
+                    "Node Type", 
+                    node_types,
+                    index=node_types.index("hidden") if "hidden" in node_types else 0,
+                    help="Select the type of node to add"
+                )
+                
+                # Add node button
+                if st.button("Add Node", key="add_node_button", use_container_width=True):
+                    try:
+                        # Add a node with the selected type
+                        st.session_state.simulator.network.add_node(visible=True, node_type=selected_node_type)
+                        st.success(f"Added a new {selected_node_type} node to the network")
+                    except Exception as e:
+                        st.error(f"Failed to add node: {str(e)}")
+                        logger.error(f"Error adding node: {str(e)}")
+            except ImportError:
+                # Fallback if NODE_TYPES import fails
+                st.warning("Node type selection is not available. Using default node types.")
+                
+                # Add node button (fallback version)
+                if st.button("Add Node", key="add_node_button", use_container_width=True):
+                    try:
+                        # Add a node with default type
+                        st.session_state.simulator.network.add_node(visible=True)
+                        st.success("Added a new node to the network")
+                    except Exception as e:
+                        st.error(f"Failed to add node: {str(e)}")
+                        logger.error(f"Error adding node: {str(e)}")
             
             # Clear and reset buttons
             col1a, col1b = st.columns(2)
             with col1a:
                 if st.button("Clear Simulation", key="clear_sim_button"):
                     if st.session_state.simulator:
-                        st.session_state.simulator.send_command({'type': 'clear'})
+                        st.session_state.simulator.network = NeuralNetwork()
                         st.success("Simulation cleared.")
             
             with col1b:
                 if st.button("Reset Simulation", key="reset_sim_button"):
                     if st.session_state.simulator:
-                        st.session_state.simulator.send_command({'type': 'reset'})
+                        st.session_state.simulator.network = NeuralNetwork()
+                        st.session_state.simulator.network.add_node(visible=True)
                         st.success("Simulation reset with a single node.")
-            
-            # Drought controls
-            st.subheader("Drought Controls")
-            
-            # Display current drought status
-            if hasattr(st.session_state.simulator, 'is_drought_period'):
-                if st.session_state.simulator.is_drought_period:
-                    remaining_steps = st.session_state.simulator.drought_end_step - st.session_state.simulator.step_count
-                    st.info(f"Drought active - {remaining_steps} steps remaining")
-                    
-                    # End drought button
-                    if st.button("End Drought Now", key="end_drought_button"):
-                        st.session_state.simulator.send_command({
-                            'type': 'end_drought'
-                        })
-                        st.success("Drought period ended manually.")
-                else:
-                    st.info("No drought active")
-                    
-                    # Start drought button
-                    col_d1, col_d2 = st.columns(2)
-                    with col_d1:
-                        drought_duration = st.number_input(
-                            "Duration (steps)", 
-                            min_value=50, 
-                            max_value=1000, 
-                            value=200,
-                            step=50,
-                            help="How long the drought will last in simulation steps.",
-                            key="drought_duration_input"
-                        )
-                    
-                    with col_d2:
-                        if st.button("Start Drought", key="start_drought_button"):
-                            st.session_state.simulator.send_command({
-                                'type': 'start_drought',
-                                'duration': drought_duration
-                            })
-                            st.success(f"Drought started for {drought_duration} steps.")
-                
-                # Drought probability settings
-                st.markdown("#### Random Drought Settings")
-                drought_probability = st.slider(
-                    "Drought Probability", 
-                    min_value=0.0, 
-                    max_value=0.01, 
-                    value=getattr(st.session_state.simulator, 'drought_probability', 0.001),
-                    step=0.001,
-                    format="%.3f",
-                    help="Probability of a drought starting each step (0.001 = 0.1%).",
-                    key="drought_probability_slider"
-                )
-                
-                # Update drought probability if changed
-                if hasattr(st.session_state.simulator, 'drought_probability') and drought_probability != st.session_state.simulator.drought_probability:
-                    st.session_state.simulator.drought_probability = drought_probability
-            
-            # Simulation parameters
-            st.subheader("Simulation Parameters")
-            
-            # Simulation speed
-            simulation_speed = st.slider(
-                "Simulation Speed", 
-                min_value=0.1, 
-                max_value=5.0, 
-                value=st.session_state.simulation_speed,
-                step=0.1,
-                help="Controls how fast the simulation runs.",
-                key="sim_speed_slider_main"
-            )
-            if simulation_speed != st.session_state.simulation_speed:
-                st.session_state.simulation_speed = simulation_speed
-                if st.session_state.simulator:
-                    st.session_state.simulator.steps_per_second = simulation_speed
-            
-            # Auto-generate nodes
-            auto_generate = st.checkbox(
-                "Auto-generate Nodes", 
-                value=st.session_state.auto_generate_nodes,
-                help="Automatically add new nodes over time.",
-                key="auto_gen_checkbox_main"
-            )
-            if auto_generate != st.session_state.auto_generate_nodes:
-                st.session_state.auto_generate_nodes = auto_generate
-                if st.session_state.simulator:
-                    st.session_state.simulator.auto_generate_nodes = auto_generate
-            
-            # Node generation parameters (only show if auto-generate is enabled)
-            if auto_generate:
-                col2a, col2b = st.columns(2)
-                
-                with col2a:
-                    # Node generation interval
-                    min_interval = st.number_input(
-                        "Min Interval (sec)", 
-                        min_value=0.5, 
-                        max_value=10.0, 
-                        value=2.0,
-                        step=0.5,
-                        help="Minimum time between node generation.",
-                        key="min_interval_input"
-                    )
-                
-                with col2b:
-                    # Node generation interval
-                    max_interval = st.number_input(
-                        "Max Interval (sec)", 
-                        min_value=1.0, 
-                        max_value=20.0, 
-                        value=10.0,
-                        step=0.5,
-                        help="Maximum time between node generation.",
-                        key="max_interval_input"
-                    )
-                
-                if min_interval > max_interval:
-                    max_interval = min_interval
-                
-                if st.session_state.simulator:
-                    st.session_state.simulator.node_generation_rate = (min_interval, max_interval)
-                
-                # Maximum nodes
-                max_nodes = st.slider(
-                    "Maximum Nodes", 
-                    min_value=10, 
-                    max_value=500, 
-                    value=st.session_state.max_nodes,
-                    step=10,
-                    help="Maximum number of nodes in the simulation.",
-                    key="max_nodes_slider_main"
-                )
-                if max_nodes != st.session_state.max_nodes:
-                    st.session_state.max_nodes = max_nodes
-                    if st.session_state.simulator:
-                        st.session_state.simulator.send_command({
-                            'type': 'set_max_nodes',
-                            'value': max_nodes
-                        })
             
             # Visualization options
             st.subheader("Visualization Options")
-            col3, col4 = st.columns(2)
             
-            with col3:
-                # Visualization mode
-                viz_mode = st.radio(
-                    "Visualization Mode",
-                    options=["3d", "2d"],
-                    index=0 if st.session_state.viz_mode == "3d" else 1,
-                    horizontal=True,
-                    help="Choose between 2D and 3D visualization.",
-                    key="viz_mode_radio_main"
-                )
-                if viz_mode != st.session_state.viz_mode:
-                    st.session_state.viz_mode = viz_mode
+            # Visualization mode
+            viz_mode = st.radio(
+                "Visualization Mode",
+                options=["3d", "2d"],
+                index=0 if st.session_state.viz_mode == "3d" else 1,
+                horizontal=True,
+                key="main_viz_mode_radio"
+            )
             
-            with col4:
-                # Auto-refresh
-                auto_refresh = st.checkbox(
-                    "Auto-refresh Visualization", 
-                    value=st.session_state.auto_refresh,
-                    help="Automatically refresh the visualization.",
-                    key="auto_refresh_checkbox_main"
+            if viz_mode != st.session_state.viz_mode:
+                st.session_state.viz_mode = viz_mode
+                if st.session_state.simulator and st.session_state.simulator.renderer:
+                    st.session_state.simulator.renderer.request_render(mode=viz_mode, force=True)
+            
+            # Auto-refresh toggle
+            auto_refresh = st.checkbox(
+                "Auto-refresh",
+                value=st.session_state.auto_refresh,
+                help="Automatically refresh visualization",
+                key="auto_refresh_checkbox"
+            )
+            
+            if auto_refresh != st.session_state.auto_refresh:
+                st.session_state.auto_refresh = auto_refresh
+            
+            # Refresh interval (only show if auto-refresh is enabled)
+            if auto_refresh:
+                refresh_interval = st.slider(
+                    "Refresh Interval (sec)",
+                    min_value=0.1,
+                    max_value=2.0,
+                    value=st.session_state.refresh_interval,
+                    step=0.1,
+                    help="Time between visualization updates",
+                    key="refresh_interval_slider"
                 )
-                if auto_refresh != st.session_state.auto_refresh:
-                    st.session_state.auto_refresh = auto_refresh
                 
-                # Refresh interval (only show if auto-refresh is enabled)
-                if auto_refresh:
-                    refresh_interval = st.slider(
-                        "Refresh Interval (sec)", 
-                        min_value=0.1, 
-                        max_value=2.0, 
-                        value=float(st.session_state.refresh_interval),
-                        step=0.1,
-                        help="Time between visualization refreshes.",
-                        key="refresh_interval_slider_main"
+                if refresh_interval != st.session_state.refresh_interval:
+                    st.session_state.refresh_interval = refresh_interval
+            
+            # Performance settings
+            with st.expander("Performance Settings"):
+                # Edge limit slider
+                max_edges = st.slider(
+                    "Max Visible Edges",
+                    min_value=100,
+                    max_value=5000,
+                    value=1000,
+                    step=100,
+                    help="Maximum number of visible edges",
+                    key="max_edges_slider"
+                )
+                
+                # Edge decimation slider
+                edge_decimation = st.slider(
+                    "Edge Decimation",
+                    min_value=1,
+                    max_value=10,
+                    value=1,
+                    step=1,
+                    help="Skip every N edges for better performance",
+                    key="edge_decimation_slider"
+                )
+                
+                # Update renderer performance settings
+                if st.session_state.simulator and st.session_state.simulator.renderer:
+                    st.session_state.simulator.renderer.update_settings(
+                        max_visible_edges=max_edges,
+                        edge_decimation=edge_decimation
                     )
-                    if refresh_interval != st.session_state.refresh_interval:
-                        st.session_state.refresh_interval = float(refresh_interval)
-        
-        # Auto-refresh mechanism
-        if st.session_state.auto_refresh:
-            # Store the current time in session state for comparison
-            if 'last_refresh_time' not in st.session_state:
-                st.session_state.last_refresh_time = time.time()
-            
-            # Check if enough time has passed since the last refresh
-            current_time = time.time()
-            if current_time - st.session_state.last_refresh_time > st.session_state.refresh_interval:
-                # Update the last refresh time
-                st.session_state.last_refresh_time = current_time
-                
-                # Force a rerun of the app to update the visualization
-                time.sleep(0.05)  # Small delay to prevent excessive refreshes
-                st.rerun()
     
     except Exception as e:
-        st.error(f"Error in simulation interface: {str(e)}")
         logger.error(f"Error in simulation interface: {str(e)}")
         logger.error(traceback.format_exc())
+        st.error("An error occurred in the simulation interface. Attempting to recover...")
+        
+        # Try to recover the simulation
+        try:
+            if st.session_state.simulator:
+                st.session_state.simulator.stop()
+                time.sleep(0.5)
+                _initialize_simulator()
+                st.success("Simulation recovered! Please restart the simulation.")
+        except Exception as recovery_error:
+            logger.error(f"Recovery failed: {str(recovery_error)}")
+            st.error("Unable to recover. Please refresh the page.")
 
 def _display_analysis_interface():
     """Display the analysis interface."""
@@ -1063,7 +1078,7 @@ def _display_export_interface():
             img_height = st.slider("Height", 600, 2160, 1080)
             
             # Visualization mode
-            img_viz_mode = st.radio("Visualization Mode", ['3d', '2d'], index=0 if st.session_state.viz_mode == '3d' else 1)
+            img_viz_mode = st.radio("Visualization Mode", ['3d', '2d'], index=0 if st.session_state.viz_mode == '3d' else 1, key="image_export_viz_mode")
             
             # Export button
             if st.button("Export Image"):
@@ -1093,7 +1108,7 @@ def _display_export_interface():
                     
                     # Display the image
                     if image_format != "SVG":
-                        st.image(output_path, caption="Exported Image", use_column_width=True)
+                        st.image(output_path, caption="Exported Image", use_container_width=True)
                     else:
                         st.info("SVG image saved. Download to view.")
                     
@@ -1220,10 +1235,10 @@ def _display_settings_interface():
             energy_decay_rate = st.slider(
                 "Energy Decay Rate",
                 min_value=0.01,
-                max_value=0.5,
-                value=st.session_state.get('energy_decay_rate', 0.05),
+                max_value=0.1,
                 step=0.01,
-                help="Rate at which nodes lose energy over time.",
+                value=st.session_state.get('energy_decay_rate', 0.02),
+                help="Rate at which nodes lose energy over time",
                 key="energy_decay_rate_slider"
             )
             st.session_state.energy_decay_rate = energy_decay_rate
@@ -1299,8 +1314,7 @@ def _display_settings_interface():
                 options=["3d", "2d"],
                 index=0 if st.session_state.viz_mode == "3d" else 1,
                 horizontal=True,
-                help="Choose between 2D and 3D visualization.",
-                key="settings_viz_mode_radio"
+                key="main_viz_mode_radio"
             )
             if viz_mode != st.session_state.viz_mode:
                 st.session_state.viz_mode = viz_mode
@@ -1465,87 +1479,102 @@ def _display_help_information():
 def _start_simulation():
     """Start the neural network simulation."""
     try:
-        # Check if simulator already exists and is running
-        if st.session_state.simulator and st.session_state.simulator.running:
-            st.session_state.simulator_running = True
-            return True
+        logger.info("Starting simulation...")
         
         # Create a new simulator if it doesn't exist
-        if st.session_state.simulator is None:
-            try:
-                # Import the simulator class
-                from frontend.src.neuneuraly import NetworkSimulator
-                
-                # Create a new simulator
-                st.session_state.simulator = NetworkSimulator(max_nodes=st.session_state.max_nodes)
-                logger.info("Created new simulator")
-            except Exception as e:
-                logger.error(f"Error creating simulator: {str(e)}")
-                logger.error(traceback.format_exc())
-                st.error(f"Error creating simulator: {str(e)}")
+        if 'simulator' not in st.session_state or st.session_state.simulator is None:
+            logger.info("Initializing simulator...")
+            if not _initialize_simulator():
+                st.error("Failed to initialize simulator")
                 return False
         
-        # Start the simulator
-        try:
-            # Set simulation parameters
-            st.session_state.simulator.auto_generate_nodes = st.session_state.auto_generate_nodes
-            st.session_state.simulator.node_generation_rate = st.session_state.node_generation_rate
-            st.session_state.simulator.max_nodes = st.session_state.max_nodes
-            
-            # Start the simulator
-            st.session_state.simulator.start(steps_per_second=st.session_state.simulation_speed)
-            st.session_state.simulator_running = True
-            logger.info("Simulator started")
-            
+        # Get the simulator
+        simulator = st.session_state.simulator
+        
+        # Check if already running
+        if getattr(simulator, 'running', False):
+            logger.info("Simulation already running")
             return True
-        except Exception as e:
-            logger.error(f"Error starting simulator: {str(e)}")
-            logger.error(traceback.format_exc())
-            st.error(f"Error starting simulator: {str(e)}")
-            return False
-    
+        
+        # Configure the simulator
+        logger.info("Configuring simulator...")
+        simulator.steps_per_second = st.session_state.get('simulation_speed', 1.0)
+        simulator.auto_generate_nodes = st.session_state.get('auto_generate_nodes', False)
+        
+        # Ensure there's at least one node
+        if len(simulator.network.nodes) == 0:
+            logger.info("Adding initial node")
+            simulator.network.add_node(visible=True)
+        
+        # Set network reference in renderer
+        logger.info("Setting network reference in renderer")
+        simulator.renderer.network = simulator.network
+        
+        # Start the renderer
+        logger.info("Starting renderer")
+        simulator.renderer.start()
+        
+        # Start the simulator
+        logger.info("Starting simulator")
+        simulator.start(steps_per_second=st.session_state.get('simulation_speed', 1.0))
+        
+        # Force an immediate visualization update
+        logger.info("Forcing initial visualization")
+        simulator.renderer.force_update(mode=st.session_state.viz_mode)
+        
+        logger.info("Simulation started successfully")
+        return True
+        
     except Exception as e:
-        logger.error(f"Unexpected error in _start_simulation: {str(e)}")
+        logger.error(f"Error starting simulation: {str(e)}")
         logger.error(traceback.format_exc())
-        st.error(f"Unexpected error: {str(e)}")
+        st.error(f"Failed to start simulation: {str(e)}")
         return False
 
 def _stop_simulation():
     """Stop the neural network simulation."""
     try:
+        logger.info("Attempting to stop simulation")
         if st.session_state.simulator and st.session_state.simulator.running:
             st.session_state.simulator.stop()
             st.session_state.simulator_running = False
-            logger.info("Simulator stopped")
+            logger.info("Simulator stopped successfully")
             return True
+        logger.info("No running simulator to stop")
         return False
     except Exception as e:
-        logger.error(f"Error stopping simulator: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Failed to stop simulator")
+        logger.error(f"Error details: {str(e)}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
         st.error(f"Error stopping simulator: {str(e)}")
         return False
 
 def _reset_simulation():
     """Reset the neural network simulation."""
     try:
+        logger.info("Attempting to reset simulation")
         # Stop the simulation if it's running
         if st.session_state.simulator and st.session_state.simulator.running:
+            logger.info("Stopping running simulator before reset")
             _stop_simulation()
         
         # Reset the simulator
         if st.session_state.simulator:
+            logger.info("Sending reset command to simulator")
             st.session_state.simulator.send_command({'type': 'reset'})
-            logger.info("Simulator reset")
+            logger.info("Simulator reset command sent")
         
         # Restart the simulation
+        logger.info("Attempting to restart simulator after reset")
         success = _start_simulation()
         if success:
-            logger.info("Simulator restarted after reset")
+            logger.info("Simulator successfully restarted after reset")
         
         return success
     except Exception as e:
-        logger.error(f"Error resetting simulator: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Failed to reset simulator")
+        logger.error(f"Error details: {str(e)}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
         st.error(f"Error resetting simulator: {str(e)}")
         return False
 
