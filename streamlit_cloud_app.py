@@ -21,6 +21,9 @@ import importlib.util
 import random
 import threading
 import time
+import numpy as np
+import plotly.graph_objects as go
+from collections import deque
 
 # Configure page settings - must be the first Streamlit command
 st.set_page_config(
@@ -292,38 +295,45 @@ class CustomNetworkSimulator:
                     if self.auto_generate and len(self.network.nodes) < self.network.max_nodes:
                         current_time = time.time()
                         if current_time - self.last_node_generation_time > self.node_generation_rate:
-                            # Use our custom node generation method
-                            new_node = self._generate_node()
-                            self.network.add_node_object(new_node)
-                            self.last_node_generation_time = current_time
-                            logger.debug(f"Auto-generated new node, total nodes: {len(self.network.nodes)}")
+                            # Select node type with specializations
+                            primary_type = random.choice(['input', 'hidden', 'output'])
+                            node_type = primary_type
+                            
+                            # 30% chance to create a specialized node
+                            if random.random() < 0.3 and primary_type in NODE_TYPES and 'specializations' in NODE_TYPES[primary_type]:
+                                specialization = random.choice(list(NODE_TYPES[primary_type]['specializations'].keys()))
+                                node_type = f"{primary_type}_{specialization}"
+                            
+                            # Create position based on layer
+                            base_z = -10 if 'input' in node_type else 0 if 'hidden' in node_type else 10
+                            position = [
+                                random.uniform(-10, 10),
+                                random.uniform(-10, 10),
+                                base_z + random.uniform(-2, 2)
+                            ]
+                            
+                            # Add the node
+                            new_node = self.network.add_node(
+                                position=position,
+                                visible=True,
+                                node_type=node_type
+                            )
+                            
+                            if new_node:
+                                new_node.energy = random.uniform(30.0, 100.0)
+                                self.last_node_generation_time = current_time
+                                logger.info(f"Auto-generated new {node_type} node at {position}")
                     
-                    # Update energy for all nodes
-                    for node in self.network.nodes:
-                        # Apply energy decay
-                        node.energy = max(0, node.energy - node.decay_rate)
-                        
-                        # Check energy zones
-                        for zone in self.energy_zones:
-                            # Calculate distance to zone
-                            node_pos = node.position
-                            zone_pos = zone['position']
-                            
-                            dx = node_pos[0] - zone_pos[0]
-                            dy = node_pos[1] - zone_pos[1]
-                            dz = node_pos[2] - zone_pos[2]
-                            
-                            distance = (dx*dx + dy*dy + dz*dz) ** 0.5
-                            
-                            # If node is within zone radius, add energy
-                            if distance <= zone['radius']:
-                                energy_factor = 1.0 - (distance / zone['radius'])
-                                node.energy = min(100.0, node.energy + energy_factor * 0.5)
-            
+                    # Update energy zones
+                    self._update_energy_zones()
+                    
+                    # Update node positions and energies
+                    self._update_nodes()
+                
             except Exception as e:
                 logger.error(f"Error in simulation loop: {str(e)}")
                 logger.error(traceback.format_exc())
-                time.sleep(1.0)  # Sleep to avoid tight error loop
+                time.sleep(1.0)  # Prevent rapid error loops
     
     def create_energy_zone(self, position, radius=3.0, energy=100.0):
         """Create a new energy zone."""
@@ -341,56 +351,243 @@ class CustomNetworkSimulator:
             self.energy_zones.pop(index)
             logger.info(f"Removed energy zone at index {index}")
 
-    def _generate_node(self):
-        """Generate a new node with random position and type."""
-        try:
-            x = random.uniform(-1, 1)
-            y = random.uniform(-1, 1)
-            z = random.uniform(-1, 1)
+    def _update_energy_zones(self):
+        """Update energy zones based on node positions."""
+        for zone in self.energy_zones:
+            zone['energy'] = 0
+            for node in self.network.nodes:
+                pos = node.position
+                zone_pos = zone['position']
+                
+                dx = pos[0] - zone_pos[0]
+                dy = pos[1] - zone_pos[1]
+                dz = pos[2] - zone_pos[2]
+                
+                distance = (dx*dx + dy*dy + dz*dz) ** 0.5
+                
+                if distance <= zone['radius']:
+                    energy_factor = 1.0 - (distance / zone['radius'])
+                    zone['energy'] += energy_factor * 0.5
+
+    def _update_nodes(self):
+        """Update node positions and energies based on energy zones."""
+        for node in self.network.nodes:
+            # Apply energy decay
+            node.energy = max(0, node.energy - node.decay_rate)
             
-            # Ensure we use a valid node type
-            node_type = random.choice(self.node_types)
-            
-            # Create a new node with explicit node_type
-            new_node = CustomNode(
-                position=(x, y, z),
-                node_type=node_type,
-                energy=random.uniform(0.1, 0.5)
-            )
-            
-            logger.debug(f"Generated new node of type {node_type} at position ({x:.2f}, {y:.2f}, {z:.2f})")
-            return new_node
-        except Exception as e:
-            logger.error(f"Error generating node: {str(e)}")
-            # Return a default node as fallback
-            return CustomNode(position=(0, 0, 0), node_type='input', energy=0.1)
+            # Check energy zones
+            for zone in self.energy_zones:
+                # Calculate distance to zone
+                node_pos = node.position
+                zone_pos = zone['position']
+                
+                dx = node_pos[0] - zone_pos[0]
+                dy = node_pos[1] - zone_pos[1]
+                dz = node_pos[2] - zone_pos[2]
+                
+                distance = (dx*dx + dy*dy + dz*dz) ** 0.5
+                
+                # If node is within zone radius, add energy
+                if distance <= zone['radius']:
+                    energy_factor = 1.0 - (distance / zone['radius'])
+                    node.energy = min(100.0, node.energy + energy_factor * 0.5)
 
 # Define a custom ContinuousVisualizer class
 class CustomContinuousVisualizer:
-    """A more robust ContinuousVisualizer class for Streamlit Cloud deployment."""
+    """A custom visualizer for Streamlit Cloud deployment."""
     
-    def __init__(self, simulator, mode='3d', update_interval=0.1, buffer_size=3):
-        """Initialize the visualizer.
-        
-        Args:
-            simulator: The network simulator to visualize
-            mode: Visualization mode ('2d' or '3d')
-            update_interval: Time between visualization updates (seconds)
-            buffer_size: Number of visualizations to keep in buffer
-        """
+    def __init__(self, simulator, mode='3d', update_interval=0.1, buffer_size=5):
+        """Initialize the visualizer."""
         self.simulator = simulator
         self.mode = mode
         self.update_interval = update_interval
         self.buffer_size = buffer_size
         self.running = False
         self.visualization_thread = None
-        self.visualization_buffer = []
-        self.buffer_lock = threading.Lock()
+        self.frame_buffer = deque(maxlen=buffer_size)
         self.last_update_time = 0
+        self.thread_lock = threading.Lock()
         self.show_connections = True
-        self.last_fps_time = time.time()
-        self.frame_count = 0
-        logger.info(f"CustomContinuousVisualizer initialized with mode={mode}, update_interval={update_interval}")
+        self.node_scale = 1.0
+        self.edge_scale = 1.0
+        logger.info("CustomContinuousVisualizer initialized")
+    
+    def _create_3d_visualization(self):
+        """Create a 3D visualization of the network."""
+        try:
+            # Create figure
+            fig = go.Figure()
+            
+            # Add nodes
+            if self.simulator.network.nodes:
+                nodes_by_type = {}
+                for node in self.simulator.network.nodes:
+                    if not node.visible:
+                        continue
+                    node_type = node.node_type
+                    if node_type not in nodes_by_type:
+                        nodes_by_type[node_type] = []
+                    nodes_by_type[node_type].append(node)
+                
+                # Create traces for each node type
+                for node_type, nodes in nodes_by_type.items():
+                    x = []
+                    y = []
+                    z = []
+                    sizes = []
+                    colors = []
+                    hover_texts = []
+                    
+                    for node in nodes:
+                        x.append(node.position[0])
+                        y.append(node.position[1])
+                        z.append(node.position[2])
+                        
+                        # Scale size based on energy
+                        base_size = 5
+                        energy_factor = node.energy / 100.0
+                        size = base_size * (0.5 + energy_factor) * self.node_scale
+                        sizes.append(size)
+                        
+                        # Get color from NODE_TYPES
+                        if node_type in NODE_TYPES:
+                            base_color = NODE_TYPES[node_type]['color']
+                        else:
+                            base_color = '#808080'  # Default gray
+                        
+                        # Adjust color opacity based on energy
+                        if base_color.startswith('#'):
+                            # Convert hex to rgba
+                            r = int(base_color[1:3], 16)
+                            g = int(base_color[3:5], 16)
+                            b = int(base_color[5:7], 16)
+                            opacity = 0.3 + (0.7 * energy_factor)
+                            color = f'rgba({r},{g},{b},{opacity})'
+                        else:
+                            color = base_color
+                        colors.append(color)
+                        
+                        # Create hover text
+                        hover_text = f"Node {node.id}<br>"
+                        hover_text += f"Type: {node_type}<br>"
+                        hover_text += f"Energy: {node.energy:.1f}<br>"
+                        hover_text += f"Connections: {len(node.connections)}"
+                        hover_texts.append(hover_text)
+                    
+                    # Add node trace
+                    fig.add_trace(go.Scatter3d(
+                        x=x, y=y, z=z,
+                        mode='markers',
+                        marker=dict(
+                            size=sizes,
+                            color=colors,
+                            line=dict(width=0.5, color='rgba(255,255,255,0.5)'),
+                            sizemode='diameter'
+                        ),
+                        text=hover_texts,
+                        hoverinfo='text',
+                        name=node_type
+                    ))
+            
+            # Add connections if enabled
+            if self.show_connections and self.simulator.network.nodes:
+                edge_x = []
+                edge_y = []
+                edge_z = []
+                edge_colors = []
+                
+                for node in self.simulator.network.nodes:
+                    if not node.visible:
+                        continue
+                    
+                    for target_id, connection in node.connections.items():
+                        target = next((n for n in self.simulator.network.nodes if n.id == target_id), None)
+                        if target and target.visible:
+                            # Add line coordinates
+                            edge_x.extend([node.position[0], target.position[0], None])
+                            edge_y.extend([node.position[1], target.position[1], None])
+                            edge_z.extend([node.position[2], target.position[2], None])
+                            
+                            # Calculate color based on connection strength
+                            strength = min(1.0, connection.get('strength', 0.5))
+                            edge_colors.extend([f'rgba(200,200,200,{strength * 0.5})'] * 3)
+                
+                if edge_x:
+                    fig.add_trace(go.Scatter3d(
+                        x=edge_x, y=edge_y, z=edge_z,
+                        mode='lines',
+                        line=dict(
+                            color=edge_colors,
+                            width=1 * self.edge_scale
+                        ),
+                        hoverinfo='none',
+                        showlegend=False
+                    ))
+            
+            # Add energy zones
+            if hasattr(self.simulator, 'energy_zones'):
+                for zone in self.simulator.energy_zones:
+                    # Get zone properties
+                    x, y, z = zone['position']
+                    radius = zone.get('current_radius', zone['radius'])
+                    energy = zone['energy']
+                    
+                    # Create color based on energy
+                    opacity = min(0.8, max(0.1, energy / 100))
+                    color = f'rgba(255, 255, 0, {opacity})'
+                    
+                    # Create sphere points
+                    u = np.linspace(0, 2 * np.pi, 20)
+                    v = np.linspace(0, np.pi, 20)
+                    
+                    sphere_x = x + radius * np.outer(np.cos(u), np.sin(v)).flatten()
+                    sphere_y = y + radius * np.outer(np.sin(u), np.sin(v)).flatten()
+                    sphere_z = z + radius * np.outer(np.ones(np.size(u)), np.cos(v)).flatten()
+                    
+                    # Add zone trace
+                    fig.add_trace(go.Scatter3d(
+                        x=sphere_x, y=sphere_y, z=sphere_z,
+                        mode='markers',
+                        marker=dict(
+                            size=3,
+                            color=color,
+                            opacity=0.3
+                        ),
+                        hoverinfo='text',
+                        text=f"Energy Zone<br>Energy: {energy:.1f}",
+                        showlegend=False
+                    ))
+            
+            # Update layout
+            fig.update_layout(
+                scene=dict(
+                    xaxis=dict(showticklabels=False, title=''),
+                    yaxis=dict(showticklabels=False, title=''),
+                    zaxis=dict(showticklabels=False, title=''),
+                    camera=dict(
+                        up=dict(x=0, y=1, z=0),
+                        center=dict(x=0, y=0, z=0),
+                        eye=dict(x=1.5, y=1.5, z=1.5)
+                    )
+                ),
+                margin=dict(l=0, r=0, t=0, b=0),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                showlegend=True,
+                legend=dict(
+                    yanchor="top",
+                    y=0.99,
+                    xanchor="left",
+                    x=0.01
+                ),
+                uirevision='constant'  # Keep camera position on updates
+            )
+            
+            return fig
+        except Exception as e:
+            logger.error(f"Error creating 3D visualization: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
     
     def start(self):
         """Start the visualization thread."""
@@ -659,7 +856,7 @@ try:
             logger.info(f"Successfully imported NODE_TYPES dictionary with {len(NODE_TYPES)} node types")
         except (AttributeError, ImportError) as e:
             logger.warning(f"Failed to import NODE_TYPES: {str(e)}")
-            # Define a fallback NODE_TYPES dictionary with basic types
+            # Define NODE_TYPES with all specialized types
             NODE_TYPES = {
                 'input': {
                     'color': '#4287f5',  # Blue
@@ -668,7 +865,14 @@ try:
                     'decay_rate': (0.02, 0.05),
                     'connection_strength': 1.2,
                     'resurrection_chance': 0.2,
-                    'generation_weight': 1.0
+                    'generation_weight': 1.0,
+                    'specializations': {
+                        'sensor': {
+                            'color': '#87cefa',  # Light blue
+                            'firing_rate': (0.15, 0.35),
+                            'connection_strength': 1.4
+                        }
+                    }
                 },
                 'hidden': {
                     'color': '#f54242',  # Red
@@ -677,25 +881,53 @@ try:
                     'decay_rate': (0.03, 0.07),
                     'connection_strength': 1.5,
                     'resurrection_chance': 0.18,
-                    'generation_weight': 1.0
+                    'generation_weight': 1.0,
+                    'specializations': {
+                        'explorer': {
+                            'color': '#FF5733',  # Orange-red
+                            'firing_rate': (0.2, 0.5),
+                            'connection_strength': 1.8
+                        },
+                        'memory': {
+                            'color': '#800080',  # Purple
+                            'decay_rate': (0.01, 0.04),
+                            'connection_strength': 1.6
+                        }
+                    }
                 },
-                'explorer': {
-                    'color': '#FF5733',  # Orange-red
-                    'size_range': (50, 200),
-                    'firing_rate': (0.2, 0.5),
-                    'decay_rate': (0.03, 0.08),
-                    'connection_strength': 1.5,
+                'output': {
+                    'color': '#42f587',  # Green
+                    'size_range': (45, 160),
+                    'firing_rate': (0.12, 0.35),
+                    'decay_rate': (0.02, 0.06),
+                    'connection_strength': 1.3,
                     'resurrection_chance': 0.15,
-                    'generation_weight': 1.0
+                    'generation_weight': 1.0,
+                    'specializations': {
+                        'catalyst': {
+                            'color': '#2ECC71',  # Emerald
+                            'firing_rate': (0.25, 0.6),
+                            'connection_strength': 2.0
+                        }
+                    }
                 },
-                'connector': {
-                    'color': '#33A8FF',  # Blue
-                    'size_range': (100, 250),
-                    'firing_rate': (0.1, 0.3),
-                    'decay_rate': (0.02, 0.05),
-                    'connection_strength': 2.0,
-                    'resurrection_chance': 0.2,
-                    'generation_weight': 1.0
+                'oscillator': {
+                    'color': '#FFC300',  # Gold
+                    'size_range': (35, 140),
+                    'firing_rate': (0.3, 0.7),
+                    'decay_rate': (0.04, 0.08),
+                    'connection_strength': 1.4,
+                    'resurrection_chance': 0.25,
+                    'generation_weight': 0.8
+                },
+                'inhibitor': {
+                    'color': '#E74C3C',  # Red
+                    'size_range': (30, 120),
+                    'firing_rate': (0.05, 0.2),
+                    'decay_rate': (0.01, 0.03),
+                    'connection_strength': 0.7,
+                    'resurrection_chance': 0.1,
+                    'generation_weight': 0.6
                 }
             }
             logger.info(f"Created fallback NODE_TYPES dictionary with {len(NODE_TYPES)} node types")
