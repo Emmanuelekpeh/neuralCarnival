@@ -1,0 +1,5 @@
+[33mc36d674[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Merge remote changes with local updates
+[33m4ac8a8b[m Cleanup: Remove redundant files and consolidate requirements
+[33m0414d73[m Update streamlit_cloud_app.py
+[33m316dcba[m Rewrite Streamlit Cloud app for improved structure and functionality
+[33m2785f48[m Fix class definition order in streamlit_cloud_app.py
